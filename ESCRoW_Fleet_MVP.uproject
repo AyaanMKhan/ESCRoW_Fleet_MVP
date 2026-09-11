@@ -3,36 +3,26 @@
 	"EngineAssociation": "5.8",
 	"Category": "",
 	"Description": "",
-	"Modules": [
-		{
-			"Name": "ESCRoW_Fleet_MVP",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		}
-	],
 	"Plugins": [
-		{
-			"Name": "ModelingToolsEditorMode",
-			"Enabled": true,
-			"TargetAllowList": [
-				"Editor"
-			]
-		},
 		{
 			"Name": "ChaosVehiclesPlugin",
 			"Enabled": true
 		},
 		{
-			"Name": "CommonUI",
+			"Name": "Metasound",
 			"Enabled": true
 		},
 		{
-			"Name": "MetasoundExperimental",
-			"Enabled": true
+			"Name": "AlembicImporter",
+			"Enabled": false
 		},
 		{
-			"Name": "OpenXR",
-			"Enabled": true
+			"Name": "GeometryCache",
+			"Enabled": false
+		},
+		{
+			"Name": "Niagara",
+			"Enabled": false
 		}
 	]
 }
