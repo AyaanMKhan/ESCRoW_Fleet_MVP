@@ -108,6 +108,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
 	void ResetFleetState();
 
+	// Follow-target state/config only. Does not move or command any vehicle.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	bool SetFollowerFollowTarget(int32 FollowerID, int32 TargetID);
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
+	int32 GetFollowerFollowTargetID(int32 FollowerID) const;
+
+	// True if TargetID is a legal follow target for FollowerID: not itself, in range
+	// 0-4, and does not introduce a cycle in the follow graph.
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
+	bool CanSetFollowerFollowTarget(int32 FollowerID, int32 TargetID) const;
+
+	// Restores the default convoy chain: F1->CommandVehicle, F2->F1, F3->F2, F4->F3.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	bool ResetDefaultFollowChain();
+
 private:
 	FESCROWFollowerStatus* FindFollower(int32 FollowerID);
 	const FESCROWFollowerStatus* FindFollower(int32 FollowerID) const;

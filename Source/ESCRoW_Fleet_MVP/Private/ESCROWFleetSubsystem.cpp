@@ -27,6 +27,8 @@ void UESCROWFleetSubsystem::ResetFleetState()
 		Status.ETASeconds = 0.0f;
 		Status.bRequiresTakeover = false;
 		Status.bCompletionReportReady = false;
+		Status.CurrentFollowTargetID = FollowerID - 1; // F1->0 (command vehicle), F2->1, F3->2, F4->3
+		Status.FollowTargetActorRef = nullptr;
 
 		FollowerStatuses.Add(Status);
 	}
@@ -307,6 +309,96 @@ void UESCROWFleetSubsystem::ClearTransientAlerts()
 	}
 
 	AddHUDMessage(EESCROWMessageSource::System, EESCROWMessageSeverity::Info, 0, TEXT("Transient alerts cleared."));
+}
+
+bool UESCROWFleetSubsystem::CanSetFollowerFollowTarget(int32 FollowerID, int32 TargetID) const
+{
+	if (FollowerID < 1 || FollowerID > 4)
+	{
+		return false;
+	}
+
+	if (TargetID < 0 || TargetID > 4)
+	{
+		return false;
+	}
+
+	if (TargetID == FollowerID)
+	{
+		return false;
+	}
+
+	if (TargetID == 0)
+	{
+		return true;
+	}
+
+	// Walk the prospective chain from TargetID back toward the command vehicle. If we
+	// reach FollowerID before reaching 0, assigning this target would create a cycle.
+	int32 CurrentID = TargetID;
+	int32 SafetyCounter = 0;
+	while (CurrentID != 0 && SafetyCounter < 8)
+	{
+		if (CurrentID == FollowerID)
+		{
+			return false;
+		}
+
+		const FESCROWFollowerStatus* Current = FindFollower(CurrentID);
+		if (!Current)
+		{
+			break;
+		}
+
+		CurrentID = Current->CurrentFollowTargetID;
+		++SafetyCounter;
+	}
+
+	return true;
+}
+
+bool UESCROWFleetSubsystem::SetFollowerFollowTarget(int32 FollowerID, int32 TargetID)
+{
+	if (!CanSetFollowerFollowTarget(FollowerID, TargetID))
+	{
+		return false;
+	}
+
+	FESCROWFollowerStatus* Follower = FindFollower(FollowerID);
+	if (!Follower)
+	{
+		return false;
+	}
+
+	Follower->CurrentFollowTargetID = TargetID;
+	Follower->FollowTargetActorRef = nullptr;
+
+	if (TargetID != 0)
+	{
+		const FESCROWFollowerStatus* Target = FindFollower(TargetID);
+		if (Target)
+		{
+			Follower->FollowTargetActorRef = Target->ActorRef;
+		}
+	}
+
+	return true;
+}
+
+int32 UESCROWFleetSubsystem::GetFollowerFollowTargetID(int32 FollowerID) const
+{
+	const FESCROWFollowerStatus* Follower = FindFollower(FollowerID);
+	return Follower ? Follower->CurrentFollowTargetID : 0;
+}
+
+bool UESCROWFleetSubsystem::ResetDefaultFollowChain()
+{
+	bool bAllSucceeded = true;
+	bAllSucceeded = SetFollowerFollowTarget(1, 0) && bAllSucceeded;
+	bAllSucceeded = SetFollowerFollowTarget(2, 1) && bAllSucceeded;
+	bAllSucceeded = SetFollowerFollowTarget(3, 2) && bAllSucceeded;
+	bAllSucceeded = SetFollowerFollowTarget(4, 3) && bAllSucceeded;
+	return bAllSucceeded;
 }
 
 FESCROWFollowerStatus* UESCROWFleetSubsystem::FindFollower(int32 FollowerID)

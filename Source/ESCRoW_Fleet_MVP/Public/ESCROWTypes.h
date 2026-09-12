@@ -148,6 +148,15 @@ struct FESCROWFollowerStatus
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
 	UObject* MapMarkerRef = nullptr;
+
+	// 0 = command vehicle, 1-4 = the FollowerID this follower currently follows.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	int32 CurrentFollowTargetID = 0;
+
+	// Cached actor reference for CurrentFollowTargetID, when known. May be null if the
+	// target has not registered yet; CurrentFollowTargetID remains authoritative.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	AActor* FollowTargetActorRef = nullptr;
 };
 
 USTRUCT(BlueprintType)
