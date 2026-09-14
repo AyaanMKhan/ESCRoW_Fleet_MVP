@@ -15,6 +15,15 @@ enum class EESCROWMissionCondition : uint8
 	MissionD_DriverTakeover
 };
 
+// Metadata-only complexity axis for the study. Not currently wired to any
+// gameplay/scenario behavior; recorded alongside session metadata and events.
+UENUM(BlueprintType)
+enum class EESCROWComplexityCondition : uint8
+{
+	LowComplexity,
+	HighComplexity
+};
+
 UENUM(BlueprintType)
 enum class EESCROWPlayerControlMode : uint8
 {
@@ -292,4 +301,85 @@ struct FESCROWEventLogEntry
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
 	FString EventText;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	int32 EventIndex = 0;
+
+	// Seconds since UESCROWSessionSubsystem::StartSession was called (not world time).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	float TimestampSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString ResearcherID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString MissionID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString ConditionSummary;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString FollowerCallsign;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString AdditionalData;
+};
+
+// Snapshot of all session/study metadata, returned by
+// UESCROWSessionSubsystem::GetSessionMetadata for display/export purposes.
+USTRUCT(BlueprintType)
+struct FESCROWSessionMetadata
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString ResearcherID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString ParticipantID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString SessionID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString StudyID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString MissionID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString MissionDisplayName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString MapName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	EESCROWComplexityCondition ComplexityCondition = EESCROWComplexityCondition::LowComplexity;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	EESCROWMissionCondition MissionCondition = EESCROWMissionCondition::MissionD_DriverTakeover;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString ConditionSummary;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString StartTimestampLocal;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString StartTimestampUTC;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString EndTimestamp;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString BuildVersion;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	FString Notes;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	bool bSessionInitialized = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	bool bSessionActive = false;
 };

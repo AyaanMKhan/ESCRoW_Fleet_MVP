@@ -42,11 +42,104 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
 	float SessionStartTimeSeconds = 0.0f;
 
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString ResearcherID;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString StudyID;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString MissionID;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString MissionDisplayName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString MapName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	EESCROWComplexityCondition ComplexityCondition = EESCROWComplexityCondition::LowComplexity;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString StartTimestampLocal;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString StartTimestampUTC;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString EndTimestamp;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString BuildVersion;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	FString Notes;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	bool bSessionActive = false;
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
 	void ResetSessionState();
 
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
 	void StartSession();
+
+	// If a session was already initialized (via the setup screen or Quick Start),
+	// does nothing. Otherwise applies the given fallback identity/mission and
+	// starts the session, so a mission map opened directly never has empty
+	// session metadata. Safe to call unconditionally from mission map BeginPlay.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void EnsureSessionFallback(const FString& FallbackResearcherID, const FString& FallbackParticipantID, const FString& FallbackMissionID, const FString& FallbackMissionDisplayName);
+
+	// Sets identity/mission/condition fields and marks the session initialized,
+	// without starting the clock. Call before loading the mission map.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void InitializeSession(const FString& NewResearcherID, const FString& NewParticipantID, const FString& NewMissionID, const FString& NewMissionDisplayName, EESCROWMissionCondition NewMissionCondition, EESCROWComplexityCondition NewComplexityCondition);
+
+	// Marks the session ended and stamps EndTimestamp. Does not clear metadata.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void EndSession();
+
+	// Alias for ResetSessionState, named to match the RA19B spec.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void ResetSession();
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
+	FESCROWSessionMetadata GetSessionMetadata() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
+	FString GetResearcherID() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
+	FString GetMissionID() const;
+
+	// Human-readable summary combining mission condition and complexity,
+	// e.g. "Mission D - Driver + Takeover / High Complexity".
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
+	FString GetConditionSummary() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
+	bool IsSessionActive() const;
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void SetResearcherID(const FString& NewResearcherID);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void SetMissionID(const FString& NewMissionID, const FString& NewMissionDisplayName);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void SetComplexityCondition(EESCROWComplexityCondition NewComplexityCondition);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	FString GenerateSessionID();
+
+	// UI convenience setters so widgets can pass a ComboBoxString selected index
+	// directly, without building enum literal pins in the graph. Index is clamped.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void SetMissionConditionByIndex(int32 Index);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void SetComplexityConditionByIndex(int32 Index);
 
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
 	void SetParticipantID(const FString& NewParticipantID);

@@ -28,8 +28,24 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|EventLog")
 	bool bLoggingEnabled = true;
 
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|EventLog")
+	FString CurrentLogFilePath;
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|EventLog")
 	void ResetLog();
+
+	// Clears the in-memory log and resets EventCounter. Equivalent to ResetLog,
+	// named to match the RA19B spec.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|EventLog")
+	void ClearEventLog();
+
+	// Clears the log and records a "Session log started" marker event.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|EventLog")
+	void StartSessionLog();
+
+	// Records a "Session log ended" marker event. Does not clear the log.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|EventLog")
+	void EndSessionLog();
 
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|EventLog")
 	void SetLoggingEnabled(bool bEnabled);
@@ -57,6 +73,26 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|EventLog")
 	FString BuildJSONLine(const FESCROWEventLogEntry& Entry) const;
+
+	// Full CSV: header row plus one row per entry, newline-separated.
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|EventLog")
+	FString BuildCSVString() const;
+
+	// Full JSONL: one JSON object per line, one per entry.
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|EventLog")
+	FString BuildJSONLString() const;
+
+	// Writes both CSV and JSONL to Saved/ESCRoW/Logs/ESCRoW_<SessionID>_events.{csv,jsonl}.
+	// Never crashes on failure; logs a warning and returns false instead.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|EventLog")
+	bool ExportEventLogToFile(FString& OutResultPath, FString& OutStatusMessage);
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|EventLog")
+	FString GetCurrentLogFilePath() const;
+
+	// One-line human-readable summary, e.g. "42 events logged. Last export: <path>".
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|EventLog")
+	FString GetLogSummary() const;
 
 private:
 	FString BuildTimestampString() const;
