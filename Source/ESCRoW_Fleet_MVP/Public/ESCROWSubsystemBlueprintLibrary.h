@@ -9,6 +9,7 @@
 class UESCROWFleetSubsystem;
 class UESCROWSessionSubsystem;
 class UESCROWEventLogSubsystem;
+class UESCROWScenarioDirectorSubsystem;
 
 /**
  * Clean Blueprint/UMG access point for the ESCRoW subsystems, so widgets and
@@ -28,6 +29,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|Subsystems", meta = (WorldContext = "WorldContextObject"))
 	static UESCROWEventLogSubsystem* GetESCROWEventLogSubsystem(const UObject* WorldContextObject);
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Subsystems", meta = (WorldContext = "WorldContextObject"))
+	static UESCROWScenarioDirectorSubsystem* GetESCROWScenarioDirectorSubsystem(const UObject* WorldContextObject);
 
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Subsystems", meta = (WorldContext = "WorldContextObject"))
 	static bool LogESCROWEvent(const UObject* WorldContextObject, const FString& EventType, const FString& EventText, int32 FollowerID);

@@ -325,6 +325,87 @@ struct FESCROWEventLogEntry
 	FString AdditionalData;
 };
 
+UENUM(BlueprintType)
+enum class EESCROWScenarioPlaybackMode : uint8
+{
+	Manual,
+	Timed,
+	Hybrid
+};
+
+UENUM(BlueprintType)
+enum class EESCROWScenarioRunState : uint8
+{
+	NotLoaded,
+	Ready,
+	Running,
+	Paused,
+	WaitingForMilestone,
+	Complete
+};
+
+// A single scripted step in a scenario's event schedule. ExecuteEventByIndex
+// interprets these fields to drive UESCROWFleetSubsystem state; the optional
+// bHas*Change flags let an event leave a field untouched instead of forcing
+// a value, since physical follower progress may not exactly track the script.
+USTRUCT(BlueprintType)
+struct FESCROWScenarioEvent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	int32 EventIndex = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	FString EventID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	FString EventLabel;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	float ScheduledTimeSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	FString EventType;
+
+	// 0 = not follower-specific (broadcast/system), 1-4 = a specific follower.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	int32 FollowerID = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	FString MessageText;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	bool bRequiresOperatorMilestone = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	FString ExpectedMilestoneName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	bool bHasObjectiveChange = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	FString NewObjectiveText;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	bool bHasStateChange = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	EESCROWFollowerState NewFollowerState = EESCROWFollowerState::Idle;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	bool bHasReportReadyChange = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	bool NewReportReadyValue = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	bool bHasTakeoverChange = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Scenario")
+	bool NewRequiresTakeoverValue = false;
+};
+
 // Snapshot of all session/study metadata, returned by
 // UESCROWSessionSubsystem::GetSessionMetadata for display/export purposes.
 USTRUCT(BlueprintType)

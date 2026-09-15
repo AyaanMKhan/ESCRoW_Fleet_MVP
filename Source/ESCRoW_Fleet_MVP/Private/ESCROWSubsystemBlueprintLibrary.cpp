@@ -5,6 +5,7 @@
 #include "ESCROWFleetSubsystem.h"
 #include "ESCROWSessionSubsystem.h"
 #include "ESCROWEventLogSubsystem.h"
+#include "ESCROWScenarioDirectorSubsystem.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
@@ -27,6 +28,12 @@ UESCROWEventLogSubsystem* UESCROWSubsystemBlueprintLibrary::GetESCROWEventLogSub
 	UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
 	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
 	return GameInstance ? GameInstance->GetSubsystem<UESCROWEventLogSubsystem>() : nullptr;
+}
+
+UESCROWScenarioDirectorSubsystem* UESCROWSubsystemBlueprintLibrary::GetESCROWScenarioDirectorSubsystem(const UObject* WorldContextObject)
+{
+	UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
+	return World ? World->GetSubsystem<UESCROWScenarioDirectorSubsystem>() : nullptr;
 }
 
 bool UESCROWSubsystemBlueprintLibrary::LogESCROWEvent(const UObject* WorldContextObject, const FString& EventType, const FString& EventText, int32 FollowerID)
