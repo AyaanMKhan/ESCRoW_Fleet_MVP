@@ -68,38 +68,38 @@ void UESCROWScenarioDirectorSubsystem::BuildMissionDSchedule()
 
 	// 0. MISSION_START
 	AddEvent(TEXT("MISSION_START"), TEXT("Mission start / awaiting tasking"), 0.0f, TEXT("MissionStart"), 0,
-		TEXT("Mission D active. Maintain convoy supervision."), false, FString());
+		TEXT("CMD-001: Mission start. Maintain convoy control and prepare to task autonomous followers."), false, FString());
 
-	// 1. CMD_001_ASSIGN_F2
-	AddEvent(TEXT("CMD_001_ASSIGN_F2"), TEXT("Assign F2 waypoint"), 15.0f, TEXT("CommanderMessage"), 2,
-		TEXT("CMD-001: Assign F2 to Position Red."), false, FString());
+	// 1. CMD_002_ASSIGN_F4
+	AddEvent(TEXT("CMD_002_ASSIGN_F4"), TEXT("Assign F4 waypoint"), 15.0f, TEXT("CommanderMessage"), 4,
+		TEXT("CMD-002: Assign F4 to investigate the marked issue area. Maintain command-vehicle control."), false, FString());
 
-	// 2. F2_TASK_ACCEPTED_OR_ENROUTE
+	// 2. F4_TASK_ACCEPTED_OR_ENROUTE
 	{
-		const int32 Index = AddEvent(TEXT("F2_TASK_ACCEPTED_OR_ENROUTE"), TEXT("F2 task active"), 35.0f, TEXT("FollowerObjectiveUpdate"), 2,
-			TEXT("F2 task active."), false, FString());
+		const int32 Index = AddEvent(TEXT("F4_TASK_ACCEPTED_OR_ENROUTE"), TEXT("F4 task active"), 35.0f, TEXT("FollowerObjectiveUpdate"), 4,
+			TEXT("F4 waypoint command accepted. Proceeding to assigned position."), false, FString());
 		EventSchedule[Index].bHasObjectiveChange = true;
-		EventSchedule[Index].NewObjectiveText = TEXT("Proceed to Position Red");
+		EventSchedule[Index].NewObjectiveText = TEXT("Investigate marked issue area");
 		EventSchedule[Index].bHasStateChange = true;
 		EventSchedule[Index].NewFollowerState = EESCROWFollowerState::MovingToWaypoint;
 	}
 
-	// 3. F2_REPORT_READY
+	// 3. F4_REPORT_READY
 	{
-		const int32 Index = AddEvent(TEXT("F2_REPORT_READY"), TEXT("F2 report ready"), 60.0f, TEXT("ReportReady"), 2,
-			TEXT("F2 reached waypoint; report ready."), false, FString());
+		const int32 Index = AddEvent(TEXT("F4_REPORT_READY"), TEXT("F4 report ready"), 60.0f, TEXT("ReportReady"), 4,
+			TEXT("F4 task status report ready."), false, FString());
 		EventSchedule[Index].bHasReportReadyChange = true;
 		EventSchedule[Index].NewReportReadyValue = true;
 	}
 
-	// 4. CMD_002_MONITOR_F3
-	AddEvent(TEXT("CMD_002_MONITOR_F3"), TEXT("Monitor F3"), 75.0f, TEXT("CommanderMessage"), 3,
-		TEXT("CMD-002: Monitor F3 during low-ground segment. Confirm feed and readiness."), false, FString());
+	// 4. CMD_003_MONITOR_F3
+	AddEvent(TEXT("CMD_003_MONITOR_F3"), TEXT("Monitor F3"), 75.0f, TEXT("CommanderMessage"), 3,
+		TEXT("CMD-003: Monitor F3 low-ground segment. Possible mobility or communications issue."), false, FString());
 
 	// 5. F3_ISSUE_DETECTED
 	{
 		const int32 Index = AddEvent(TEXT("F3_ISSUE_DETECTED"), TEXT("F3 issue detected"), 95.0f, TEXT("IssueDetected"), 3,
-			TEXT("F3 degraded autonomy; takeover may be required."), false, FString());
+			TEXT("F3 status degraded. Operator attention requested."), false, FString());
 		EventSchedule[Index].bHasObjectiveChange = true;
 		EventSchedule[Index].NewObjectiveText = TEXT("Manual intervention required");
 		EventSchedule[Index].bHasStateChange = true;
@@ -110,7 +110,7 @@ void UESCROWScenarioDirectorSubsystem::BuildMissionDSchedule()
 
 	// 6. WAIT_FOR_TAKEOVER (milestone-gated)
 	AddEvent(TEXT("WAIT_FOR_TAKEOVER"), TEXT("F3 takeover pending"), -1.0f, TEXT("WaitForMilestone"), 3,
-		TEXT("Take over F3 when ready."), true, Milestone_F3TakeoverActive);
+		TEXT("CMD-004: Direct control required for F3 recovery."), true, Milestone_F3TakeoverActive);
 
 	// 7. WAIT_FOR_RETURN (milestone-gated)
 	AddEvent(TEXT("WAIT_FOR_RETURN"), TEXT("F3 takeover active"), -1.0f, TEXT("WaitForMilestone"), 3,
@@ -119,7 +119,7 @@ void UESCROWScenarioDirectorSubsystem::BuildMissionDSchedule()
 	// 8. F3_RECOVERY_COMPLETE
 	{
 		const int32 Index = AddEvent(TEXT("F3_RECOVERY_COMPLETE"), TEXT("F3 recovered"), -1.0f, TEXT("RecoveryComplete"), 3,
-			TEXT("F3 returned to autonomy."), false, FString());
+			TEXT("F3 recovery complete. Returning to autonomous follow."), false, FString());
 		EventSchedule[Index].bHasObjectiveChange = true;
 		EventSchedule[Index].NewObjectiveText = TEXT("Recovery complete; returning to convoy");
 		EventSchedule[Index].bHasStateChange = true;
@@ -132,7 +132,7 @@ void UESCROWScenarioDirectorSubsystem::BuildMissionDSchedule()
 
 	// 9. FINAL_REPORT_REQUEST
 	AddEvent(TEXT("FINAL_REPORT_REQUEST"), TEXT("Final report"), -1.0f, TEXT("CommanderMessage"), 0,
-		TEXT("CMD-004: Submit final fleet status and recovery report."), false, FString());
+		TEXT("CMD-005: Mission checkpoint complete. Fleet status report ready for export."), false, FString());
 
 	// 10. MISSION_COMPLETE
 	AddEvent(TEXT("MISSION_COMPLETE"), TEXT("Demo complete"), -1.0f, TEXT("MissionComplete"), 0,
