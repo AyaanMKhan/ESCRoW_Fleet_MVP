@@ -93,6 +93,16 @@ transform (world delta → rotate by `-ActiveYaw` → local forward/right → mi
 attempting further raw Blueprint-graph surgery through this DSL tool. A C++ function is one node to
 wire in, sidestepping the custom-local-function-creation limitation entirely.
 
+**RA30D-1 update: this helper now exists.** `UESCROWMapProjectionLibrary::ProjectWorldLocationToHeadingUpMinimap`
+(`Source/ESCRoW_Fleet_MVP/Public/ESCROWMapProjectionLibrary.h` /
+`Private/ESCROWMapProjectionLibrary.cpp`) is a `BlueprintPure` node that takes an active actor's
+location/yaw and a target world location and returns an `FESCROWMinimapProjectionResult` — a ready-to-use
+`RenderTranslation` (already sign-corrected for UMG's Y-down screen space and clamped to the minimap
+edge when out of range), plus `bInRange`/`bClamped`/`BearingDegrees` for future edge-indicator work. A
+second overload, `ProjectWorldLocationToHeadingUpMinimapSimple`, takes two `AActor*` directly. Neither
+touches any Blueprint graph, widget, or `.uasset` — this pass only added the C++ helper and compiled it;
+CV/F1-F4/objective minimap markers are still suppressed and will be wired up in RA30D-2 using this node.
+
 ## Why the vendor minimap is unused
 
 The vendor `MapSystem` marketplace plugin remains enabled in the project (`.uproject`) but no `MapZone`
