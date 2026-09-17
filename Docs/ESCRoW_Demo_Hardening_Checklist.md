@@ -168,3 +168,31 @@ As of RA31A-1A/1B/GYM-PASS, several items above are superseded:
   - Tactical-map squish/checkerboard, minimap marker clustering, and a dedicated full tactical-map mode
     remain out of scope, unchanged from RA31.
   - Full HUD visual redesign was not attempted; only sizing and Reports content/labels changed.
+
+## RA33A-1 update note (facilitator-ready demo pass)
+
+- **New doc**: `Docs/ESCRoW_Facilitator_Demo_Runbook.md` — a step-by-step 3-5 minute demo script,
+  control reference, expected cues, and troubleshooting for running the demo live.
+- **Commander tab now shows an in-HUD shortcut hint**: "Demo controls: F5 Start • F6 Next • F7 Pause •
+  F8 Reset", a small muted line under the scenario button row — a facilitator no longer needs to
+  memorize the keys from documentation alone.
+- **Reports tab report button is now demo-robust.** Renamed "Send Selected Report" → **"Send Pending
+  Report"**; `Escrow_SendSelectedFollowerReport` now checks the selected follower first, then falls back
+  to F4, then F3, before reporting "No pending reports." — a participant no longer gets a confusing
+  "No report ready for F3" just because F3 happened to be selected while F4's report was the one ready.
+  Verified live for the original "selected follower has a report" path (unchanged, still fires
+  correctly) and structurally verified for the new fallback branches (clean compile, all pin wiring
+  confirmed); the fallback branches themselves could not be confirmed with a clean live screenshot this
+  pass due to intermittent `Enter`-key unresponsiveness in the PIE automation environment (same class of
+  flakiness noted in RA32A-1) combined with tab navigation unavoidably re-selecting F4 en route to
+  REPORTS from F1-F3. Recommend a manual (human) pass to confirm the fallback text on-screen.
+- **F4 tasking and F3 takeover/recovery clarity**: inspection found these were already adequately
+  communicated by existing text (CMD-002 explicitly names F4; Reports LIVE STATUS already shows
+  "F3 recovery status — takeover required" / "recovered"; Commander guidance already lists CMD-004
+  "Direct control required for F3 recovery") — no changes made, since forcing the exact literal phrase
+  "TAKEOVER REQUIRED: F3" would require editing the C++ scenario schedule text, out of scope for this
+  pass without asking first.
+- **Export/end-state clarity**: CMD-005 ("Mission checkpoint complete. Fleet status report ready for
+  export.") and the Reports EXPORT section/Export Mission Log button were confirmed already present and
+  working from prior passes; no changes made.
+- No map/minimap/vehicle/follower/C++ files were touched this pass.
