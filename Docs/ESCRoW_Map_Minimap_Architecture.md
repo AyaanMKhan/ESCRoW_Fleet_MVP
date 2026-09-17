@@ -155,3 +155,30 @@ path.
   to functions that call other custom Blueprint functions should use small, surgical node-level edits
   (`create_node`/`connect_pins`/`delete_node` with engine-level node types only) rather than full-body
   DSL rewrites, or move the logic into C++.
+
+## RA32B-1 investigation note (full MAP tab squish/checkerboard check)
+
+RA32B-1 was asked to repair MAP tab squish/stretch and checkerboard/transparency artifacts. Thorough
+inspection (property-level math plus live PIE screenshots at multiple zoom levels) found **no
+reproducible defect**, so no fix was applied:
+
+- `MapSceneCapture` captures a square 25000x25000 world area into a square 1024x1024 `LiveMapRT`
+  (`CreateRenderTarget2D(1024, 1024, "RTF_RGBA8")`, cleared opaque black, `OrthoWidth=25000`) — a true
+  1:1 world-to-texture aspect, no capture-side distortion.
+- `MAP_LiveMapImage`'s brush UV region (`y: [0.2222, 0.7778]`, `x: [0,1]`) crops that square texture to
+  a 1024x569 region, which is then displayed inside the 900x500 `MAP_WireframeSizeBox`/Canvas. The
+  screen-space scale factor works out identical on both axes (900/25000 = 500/13889 = 0.036 px per
+  world unit), so the displayed footprint is proportionally correct, not squished.
+- No checkerboard/transparency artifact appeared in live PIE screenshots (full console frame and a
+  tight 3x zoom on the tactical-map card); the RT clear color is opaque black with alpha 1, and the
+  brush tint alpha is 1. The faint grid lines visible on the map (`MAP_GridV_1-3`/`MAP_GridH_1-3`) are
+  an intentional coordinate-reference overlay, not a transparency/checker artifact.
+- CV/F1-F4/ROUTE/POS RED/ISSUE/REJOIN markers all appeared in plausible positions relative to the
+  visible terrain and to each other, consistent with the existing `WorldToMapUV` math.
+- No changes were made to `WBP_ESCROW_CommandHUD` or `BP_ESCROW_MapCaptureManager` this pass. Minimap
+  was not touched.
+- **Remaining limitation:** if squish/checkerboard is still visible to a human observer under
+  conditions this pass didn't reproduce (different resolution, first-frame-before-capture timing, or a
+  GPU/driver-specific rendering difference), the next pass should capture a screenshot showing the
+  exact artifact before any further Blueprint/material changes are attempted, since the underlying math
+  and live rendering both check out correct here.
