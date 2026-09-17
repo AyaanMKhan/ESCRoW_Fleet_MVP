@@ -184,6 +184,11 @@ bool UESCROWFleetSubsystem::ReceiveFollowerMessage(int32 FollowerID, const FStri
 	return true;
 }
 
+void UESCROWFleetSubsystem::ReceiveSystemMessage(const FString& MessageText, EESCROWMessageSeverity Severity)
+{
+	AddHUDMessage(EESCROWMessageSource::System, Severity, 0, MessageText);
+}
+
 FESCROWFleetCommand UESCROWFleetSubsystem::QueueFleetCommand(int32 TargetFollowerID, EESCROWCommandType CommandType, AActor* TargetWaypointActor, EESCROWActionType ActionType, const FString& CommandText)
 {
 	FESCROWFleetCommand NewCommand;

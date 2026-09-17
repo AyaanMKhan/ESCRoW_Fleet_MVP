@@ -84,6 +84,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
 	bool ReceiveFollowerMessage(int32 FollowerID, const FString& MessageText, EESCROWMessageSeverity Severity);
 
+	// Commander/system-wide HUD message not tied to a specific follower (e.g. mission start/checkpoint).
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	void ReceiveSystemMessage(const FString& MessageText, EESCROWMessageSeverity Severity = EESCROWMessageSeverity::Info);
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
 	FESCROWFleetCommand QueueFleetCommand(int32 TargetFollowerID, EESCROWCommandType CommandType, AActor* TargetWaypointActor, EESCROWActionType ActionType, const FString& CommandText);
 

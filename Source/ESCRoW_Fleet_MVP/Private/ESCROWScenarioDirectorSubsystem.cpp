@@ -280,6 +280,11 @@ void UESCROWScenarioDirectorSubsystem::EnterEventState(const FESCROWScenarioEven
 			Fleet->ReceiveFollowerMessage(Event.FollowerID, Event.MessageText, Severity);
 		}
 	}
+	else if (Fleet && Event.FollowerID == 0 && !Event.MessageText.IsEmpty())
+	{
+		const EESCROWMessageSeverity Severity = (Event.EventType == TEXT("IssueDetected")) ? EESCROWMessageSeverity::Warning : EESCROWMessageSeverity::Info;
+		Fleet->ReceiveSystemMessage(Event.MessageText, Severity);
+	}
 
 	if (Event.bRequiresOperatorMilestone)
 	{
