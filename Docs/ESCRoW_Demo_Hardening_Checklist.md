@@ -146,3 +146,25 @@ As of RA31A-1A/1B/GYM-PASS, several items above are superseded:
   documented separately in `ESCRoW_Map_Minimap_Architecture.md`.
 - A dedicated full tactical-map mode (as distinct from the current single live-capture MAP page) is not
   implemented.
+
+## RA32A-1 update note (fixed command-console frame)
+
+- **The Command Console shell no longer resizes between tabs.** Root cause: `SizeBox_6` (wrapping the
+  MAP/F1-F4/COMMANDER/REPORTS `PageSwitcher`) had a fixed `WidthOverride` but no `HeightOverride`, so the
+  console auto-sized to whichever page's content was tallest. It now has a fixed `HeightOverride` (650,
+  matching the MAP page's tactical-map size as the largest/reference layout), with `bOverride_HeightOverride`
+  explicitly enabled — shorter pages (Commander, Reports) now render inside the same fixed region with
+  blank space below rather than shrinking the whole console.
+- **Reports tab now reads as a deliberate panel**: retitled "MISSION REPORTS", with labeled sections
+  "LIVE STATUS" (F4/F3/final-fleet dynamic rows), "EXPORT" (export status), and "REPORT ACTIONS" (the
+  three buttons), styled to match the existing Commander "SCENARIO CONTROL" sub-header look. The RA31A-2
+  dynamic `RPT_Item1`/`RPT_Item2` chains and the hidden `RPT_StatusText` are unchanged.
+- **Remaining limitations:**
+  - Reports/Commander status rows still refresh on tab entry (or on the action that changes them via
+    existing calls), not instantly on every action — a low-risk "refresh Reports on Send/Export" wiring
+    was attempted but blocked by the same Unreal MCP tool limitation noted in
+    `ESCROW_Map_Minimap_Architecture.md` (cannot create new call-nodes to custom Blueprint functions);
+    not fixed this pass.
+  - Tactical-map squish/checkerboard, minimap marker clustering, and a dedicated full tactical-map mode
+    remain out of scope, unchanged from RA31.
+  - Full HUD visual redesign was not attempted; only sizing and Reports content/labels changed.
