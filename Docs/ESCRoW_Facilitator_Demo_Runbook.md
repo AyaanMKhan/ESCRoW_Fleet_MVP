@@ -23,9 +23,12 @@ that demands direct control, recovery, report submission, and mission checkpoint
 6. Confirm you can see: the tab bar (MAP / F1 / F2 / F3 / F4 / COMMANDER / REPORTS), the
    persistent status line just below it, the tactical map with fleet markers, and the
    bottom-right minimap with a heading-up arrow and F1–F4 markers.
-7. Before pressing `F5`, an F1-F4 follower tab's persistent status line reads **"Mission not
-   started. Press F5 or open Commander to Start Mission D."** — this is expected and is not a
-   stuck/blank state; it is only shown when no scripted messages have arrived yet.
+7. Before pressing `F5` or `8`, the persistent status line reads **"Press 8 for report demo,
+   or open COMMANDER for Mission D controls."** — this is expected and is not a stuck/blank
+   state; it is only shown when no scripted messages have arrived yet. (RA35A-1 changed this
+   line's default text to point at the new report-deck path below; `F5`/Mission D still works
+   exactly as before — see §4 — but is no longer the primary thing a facilitator is told to try
+   first.)
 
 ## 3. Controls / shortcuts
 
@@ -41,6 +44,7 @@ that demands direct control, recovery, report submission, and mission checkpoint
 | `F6` | Next scenario event (manually advances even past milestone waits) |
 | `F7` | Pause/Resume scenario |
 | `F8` | Reset scenario |
+| `8` | Deliver next report (toast + REPORTS panel update) — see §8 |
 
 **Waypoint placement:** on the MAP tab, use `Up`/`Down` + `Enter` to select **Set Waypoint**,
 then move the placement cursor and `Enter` to confirm (or `B` to cancel).
@@ -161,14 +165,23 @@ presentation-only change; the underlying follow-target logic is unchanged.
   RA32B-1 and did not reproduce — treat it as resolved/non-issue unless a fresh screenshot
   shows otherwise.
 - No packaging/build pass has been done yet — this demo runs from the editor via PIE only.
-- The F1-F4 follower feed shows the vendor vehicle's driver/occupant mesh (arms, hands,
-  steering wheel) rather than a clean exterior-only view. The mesh (`Driver`, defined on the
-  vendor Blueprint `/Game/DD_Vehicles_Basic/Blueprints/Vehicles/BP_BaseCar`, inherited into
+- The F1-F4 follower feed still shows the vendor vehicle's driver/occupant mesh (arms, hands,
+  steering wheel) rather than a clean exterior-only view — confirmed unresolved as of RA33C via
+  two fresh live PIE checks. The mesh (`Driver`, defined on the vendor Blueprint
+  `/Game/DD_Vehicles_Basic/Blueprints/Vehicles/BP_BaseCar`, inherited into
   `BP_ESCROW_FollowerVehicle`) could not be hidden from the feed capture through the available
-  tooling without risking an edit to the shared vendor asset (see RA33B-1 final report for
-  detail); the correct fix is a manual one — open `BP_ESCROW_FollowerVehicle` in the editor,
-  select the inherited `Driver` component in the Class Defaults / Components panel (this
-  creates a proper per-Blueprint override), and set **Hidden in Scene Capture** to true.
+  MCP tooling without risking an edit to the shared vendor asset (see RA33B-1 final report for
+  detail). **RA33C found that `BP_BaseCar`'s own `Driver` component now has `bHiddenInGame=true`
+  set directly on the vendor asset** (not a proper per-child override — done outside any RA pass,
+  most likely by hand in the editor) — this does not work (hands are still visible after a fresh
+  PIE restart) and, because `BP_ESCROW_CommandVehicle` inherits from the same vendor chain, it
+  is a live change sitting on the Command Vehicle's driver mesh too. See
+  `Docs/ESCRoW_Morning_Triage_RA33C.md` for full detail; this should be reviewed/reverted before
+  committing. **The correct fix remains a manual one**: open `BP_ESCROW_FollowerVehicle` in the
+  editor, select the inherited `Driver` component in the Class Defaults / Components panel (this
+  creates a proper per-Blueprint override, distinct from editing the vendor asset), and set
+  **Hidden in Scene Capture** to true — this hides it from the feed only, without touching the
+  vendor asset or the Command Vehicle.
 - Report Record's persistent panel is confirmed working, visually, on all four follower pages
   (RA33B-2, live PIE screenshots). Note for future passes: the RA33B-1 pass had wired this
   toggle onto a disconnected/dead branch of `Escrow_FollowerAction` — pressing the button never
@@ -180,3 +193,53 @@ presentation-only change; the underlying follow-target logic is unchanged.
   live `ActionId==0` path. If Report Record is extended again, verify the edited branch is
   actually reachable from `FunctionEntry` by tracing pin connections rather than trusting a
   DSL read alone.
+- **RA33C overnight pass (stabilization only, no Blueprint edits needed)**: re-verified in a
+  fresh live PIE session that Report Record still opens/closes correctly on F1 with bounded
+  text, that the persistent mission line still shows CMD-001 and later scenario messages while
+  staying on a follower page (no separate "mission feed" label was added — the existing
+  behavior already satisfies this without further changes), that MAP/Reports/minimap are still
+  clean, and that Set Follow Target's cancel feedback is already small/muted as documented
+  above. One occurrence of `Enter` not registering for several consecutive presses was traced
+  to a *stale* PIE session that had been running for hours before this pass started — a fresh
+  Stop/Start of PIE resolved it immediately. If `Enter` seems unresponsive during a demo
+  rehearsal, restarting PIE (not just retrying the key) is the more reliable fix.
+
+## 8. Facilitator Report-Deck Demo Path (RA35A-1)
+
+This is a smaller, more reliable alternative (or a lead-in) to the scripted `F5`/`F6` Mission D
+flow in §4 — a facilitator-driven sequence of four fixed mission-brief reports, triggered
+entirely by one key, that does not depend on the `ScenarioDirector`'s timers or on any follower
+being in a particular state.
+
+1. From any HUD state (Monitoring or Command Console, any tab), press **`8`**. A dark
+   translucent **"NEW REPORT"** toast appears in the upper-right corner: **"Mission brief
+   received. Open REPORTS."** This toast is independent of Monitoring vs. Console mode — it
+   stays visible across both, and does not cover the minimap (bottom-right) or the Monitoring
+   stack (top-left).
+2. Open the Command Console (`Tab`) and switch to the **REPORTS** tab (`Q`/`E`). A new
+   **MISSION REPORTS** panel above the existing LIVE STATUS/EXPORT sections shows the current
+   report's title, priority, source, report index ("Report 1 of 4", etc.), body, tasking, and
+   status, styled in charcoal/gold to match the console's existing look.
+3. Three buttons under the report text — **`< Previous`**, **Confirm Report**, **`Next >`** —
+   step backward/forward through the fixed 4-report deck, or acknowledge the current one:
+   - **Confirm Report** shows "Report confirmed." and advances to the next report (or "Report
+     confirmed. No newer reports." if already on Report 4 of 4).
+   - **Next** shows "Next report loaded." or "No newer reports." at the last report.
+   - **Previous** shows "Previous report loaded." or "No previous reports." at the first report.
+4. Press **`8`** again to deliver the next report in the deck and re-show the toast. The deck
+   always holds exactly these four reports, in order: (1) Initial Mission Brief, (2) Commander
+   Tasking: F2 Position (tasks the facilitator to select F2 and Set Waypoint on the MAP tab),
+   (3) Fleet Coordination Update (tasks setting F3 to follow F1), (4) Recovery Demonstration
+   (tasks Take Over F3).
+5. The original **Send Pending Report** / **Clear Completed (Mock)** / **Export Mission Log**
+   buttons in the REPORT ACTIONS box are unchanged and still work exactly as in §4 — the new
+   Previous/Confirm/Next row is a separate control group, not a replacement.
+
+**Known gaps in this path (by design, not oversight):** the four reports are fixed text, not
+tied to actual follower/vehicle state — confirming a report does not itself move F2/F3/F1 or
+change any Fleet subsystem state; a facilitator narrating the demo still performs the
+MAP/FOLLOWER actions the report describes. The REPORTS tab's existing `●` badge (which lights up
+when F3 needs takeover or a real report is ready) is not wired to this new deck — it continues
+to reflect only the original Fleet-state-driven condition. No event-log entry format beyond the
+existing `ESCROWEventLogSubsystem` calls (`DemoReportReceived` on `8`, `DemoReportConfirmed` on
+Confirm) was added.

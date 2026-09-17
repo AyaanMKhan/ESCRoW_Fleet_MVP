@@ -224,3 +224,27 @@ As of RA31A-1A/1B/GYM-PASS, several items above are superseded:
 - Follower-feed avatar/hands hiding was not re-attempted — the RA33B-1 tool limitation (cannot
   create a child-scoped component override for the inherited `Driver` mesh without risking the
   shared vendor `BP_BaseCar` asset) is unchanged; see the runbook's Known Limitations section.
+
+## RA35A-1 update note (facilitator report-deck pivot)
+
+- **New `8` key**: shows an upper-right "NEW REPORT" toast and delivers the next entry in a
+  fixed 4-report mission-brief deck to a new panel on the REPORTS tab, additive to the existing
+  RPT_ActionsBox/Send-Pending-Report/Export flow (untouched). See the runbook's new §8 for the
+  full walkthrough and exact report text.
+- **New REPORTS-tab controls**: `< Previous` / `Confirm Report` / `Next >` step through the
+  deck; mouse-click only (not wired into the existing `Up`/`Down` action-highlight cycling for
+  MAP/COMMANDER/REPORTS actions — a facilitator with a keyboard-only setup should use `8` to
+  advance and rely on the toast/panel text rather than clicking, or add keyboard reach to these
+  three buttons in a future pass).
+- **HUD text de-emphasized F5**: the persistent status line's pre-start default and the
+  Commander-tab hint line now read "Press 8 for report demo..." and "8 New Report • REPORTS
+  Confirm/Next • COMMANDER for Mission D" respectively; `F5`/`F6`/`F7`/`F8` bindings themselves
+  are unchanged and still start/advance/pause/reset Mission D exactly as before.
+- **Verification note**: automated PIE keypress simulation (`PressKey` via the Slate inspector
+  toolset) fired the `8` binding's Pressed event twice per logical call in this session's testing
+  (confirmed by the deck landing on Report 2 after exactly one `PressKey "Eight"` call, both in
+  this pass's first and second PIE sessions) — a testing-tool double-fire, not a code defect; a
+  real physical keypress fires the event once. Also found: recompiling `WBP_ESCROW_CommandHUD`
+  while a PIE session already had it live corrupts that live widget instance (every widget
+  getter starts returning Accessed-None) — always `StopPIE` before any Blueprint edit/compile,
+  never compile mid-session.
