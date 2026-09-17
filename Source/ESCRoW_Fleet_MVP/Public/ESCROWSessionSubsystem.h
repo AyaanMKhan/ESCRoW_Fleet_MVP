@@ -60,6 +60,15 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
 	EESCROWComplexityCondition ComplexityCondition = EESCROWComplexityCondition::LowComplexity;
 
+	// RA36A-1: experimental display-locus / vehicle-control-role factors.
+	// Metadata/plumbing only in this pass — no runtime HUD/console/possession
+	// behavior reads these yet. HUDPrimary + Driving matches current default behavior.
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	EESCROWDisplayMode DisplayMode = EESCROWDisplayMode::HUDPrimary;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	EESCROWVehicleControlRole VehicleControlRole = EESCROWVehicleControlRole::Driving;
+
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
 	FString StartTimestampLocal;
 
@@ -140,6 +149,31 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
 	void SetComplexityConditionByIndex(int32 Index);
+
+	// RA36A-1: experimental display-locus / vehicle-control-role factors.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void SetDisplayMode(EESCROWDisplayMode NewDisplayMode);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void SetDisplayModeByIndex(int32 Index);
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
+	EESCROWDisplayMode GetDisplayMode() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
+	FString GetDisplayModeName() const;
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void SetVehicleControlRole(EESCROWVehicleControlRole NewVehicleControlRole);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
+	void SetVehicleControlRoleByIndex(int32 Index);
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
+	EESCROWVehicleControlRole GetVehicleControlRole() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
+	FString GetVehicleControlRoleName() const;
 
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
 	void SetParticipantID(const FString& NewParticipantID);

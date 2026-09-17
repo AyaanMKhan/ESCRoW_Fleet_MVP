@@ -24,6 +24,26 @@ enum class EESCROWComplexityCondition : uint8
 	HighComplexity
 };
 
+// RA36A-1: experimental display-locus factor. Metadata-only for this pass; does
+// not yet change any runtime HUD/console behavior. HUDPrimary is the default,
+// matching current build behavior.
+UENUM(BlueprintType)
+enum class EESCROWDisplayMode : uint8
+{
+	HUDPrimary,
+	ConsolePrimary
+};
+
+// RA36A-1: experimental vehicle-control-role factor. Metadata-only for this
+// pass; does not yet change any runtime possession/driving behavior. Driving
+// is the default, matching current build behavior.
+UENUM(BlueprintType)
+enum class EESCROWVehicleControlRole : uint8
+{
+	Driving,
+	NotDriving
+};
+
 UENUM(BlueprintType)
 enum class EESCROWPlayerControlMode : uint8
 {
@@ -442,6 +462,13 @@ struct FESCROWSessionMetadata
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
 	FString ConditionSummary;
+
+	// RA36A-1: experimental display-locus / vehicle-control-role factors, metadata only.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	EESCROWDisplayMode DisplayMode = EESCROWDisplayMode::HUDPrimary;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
+	EESCROWVehicleControlRole VehicleControlRole = EESCROWVehicleControlRole::Driving;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
 	FString StartTimestampLocal;

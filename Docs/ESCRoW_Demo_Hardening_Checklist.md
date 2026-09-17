@@ -248,3 +248,42 @@ As of RA31A-1A/1B/GYM-PASS, several items above are superseded:
   while a PIE session already had it live corrupts that live widget instance (every widget
   getter starts returning Accessed-None) — always `StopPIE` before any Blueprint edit/compile,
   never compile mid-session.
+
+## RA36A-1 update note (Display Mode / Vehicle-Control Role condition plumbing)
+
+- **Additive only, no behavior change**: added `EESCROWDisplayMode` (HUD Primary/Console
+  Primary) and `EESCROWVehicleControlRole` (Driving/Not Driving) to `ESCROWTypes.h`, new fields
+  + accessors on `UESCROWSessionSubsystem` (default HUD Primary + Driving, matching current
+  behavior exactly), and both labels now appended to `GetConditionSummary()` — which already
+  flows automatically into the Reports tab session line and every event-log CSV/JSONL export
+  via the existing `ConditionSummary` field, with no further wiring needed.
+- **Setup screen**: `WBP_ESCROW_ExperimentSetup` gained two new combo-box rows (Display Mode,
+  Vehicle-Control Role) with one-line explanations, matching the existing Mission
+  Condition/Complexity combo-box pattern. Visible and selectable now.
+- **Known gap, next step**: the C++ module has not been rebuilt this pass (this session cannot
+  close the editor to run a cold `Build.bat`), so the two new combo boxes are not yet wired into
+  `Escrow_ValidateAndStartSession` — a selection made there does not yet persist. See
+  `Docs/ESCRoW_Display_Control_Condition_Plan.md` §5-6 for the exact next step (close editor,
+  rebuild, reopen, then wire the two combo boxes' selected index into
+  `SetDisplayModeByIndex`/`SetVehicleControlRoleByIndex`).
+- No HUD, console, map/minimap, scenario, vehicle, or follower behavior was touched this pass.
+
+## RA36A-2 update note (combo boxes wired to session subsystem)
+
+- Cold C++ rebuild confirmed successful (`SetDisplayModeByIndex`, `SetVehicleControlRoleByIndex`,
+  `GetDisplayModeName`, `GetVehicleControlRoleName` all discoverable in the Blueprint editor).
+- `Escrow_ValidateAndStartSession` now reads `CB_DisplayMode`/`CB_VehicleControlRole`'s selected
+  index and calls the two new setters, spliced in as a small node insert right after the existing
+  `SetComplexityConditionByIndex` call — no full-function rewrite, everything else in that
+  function is untouched (confirmed via DSL read-back).
+- Verified live: the Reports tab session line now reads "...Condition: Mission D - Driver +
+  Takeover / Low Complexity / HUD Primary / Driving | Events: 12" at the default values — the
+  new labels reach the HUD automatically via `GetConditionSummary()`, no HUD edit needed. Report
+  deck toast (`8`), REPORTS panel, MAP tab (no feed overlay), and minimap all reconfirmed
+  unaffected in the same PIE session.
+- Could not live-test the alternate combo selections (Console Primary + Not Driving) — the Main
+  Menu's UMG canvas isn't reachable via the available input-simulation tooling in this
+  environment (pre-existing `CommonUI`/`LogUIActionRouter` focus limitation, unrelated to this
+  pass). Correctness rests on the wiring being structurally identical to the already-proven
+  Mission Condition/Complexity pattern.
+- No new Blueprint compile errors or Accessed-None runtime errors.

@@ -23,6 +23,8 @@ void UESCROWSessionSubsystem::ResetSessionState()
 	MissionDisplayName.Empty();
 	MapName.Empty();
 	ComplexityCondition = EESCROWComplexityCondition::LowComplexity;
+	DisplayMode = EESCROWDisplayMode::HUDPrimary;
+	VehicleControlRole = EESCROWVehicleControlRole::Driving;
 	StartTimestampLocal.Empty();
 	StartTimestampUTC.Empty();
 	EndTimestamp.Empty();
@@ -163,6 +165,8 @@ FESCROWSessionMetadata UESCROWSessionSubsystem::GetSessionMetadata() const
 	Metadata.MapName = MapName;
 	Metadata.ComplexityCondition = ComplexityCondition;
 	Metadata.MissionCondition = SelectedMissionCondition;
+	Metadata.DisplayMode = DisplayMode;
+	Metadata.VehicleControlRole = VehicleControlRole;
 	Metadata.ConditionSummary = GetConditionSummary();
 	Metadata.StartTimestampLocal = StartTimestampLocal;
 	Metadata.StartTimestampUTC = StartTimestampUTC;
@@ -187,7 +191,49 @@ FString UESCROWSessionSubsystem::GetMissionID() const
 FString UESCROWSessionSubsystem::GetConditionSummary() const
 {
 	const FString ComplexityName = (ComplexityCondition == EESCROWComplexityCondition::HighComplexity) ? TEXT("High Complexity") : TEXT("Low Complexity");
-	return FString::Printf(TEXT("%s / %s"), *GetMissionConditionName(), *ComplexityName);
+	return FString::Printf(TEXT("%s / %s / %s / %s"), *GetMissionConditionName(), *ComplexityName, *GetDisplayModeName(), *GetVehicleControlRoleName());
+}
+
+void UESCROWSessionSubsystem::SetDisplayMode(EESCROWDisplayMode NewDisplayMode)
+{
+	DisplayMode = NewDisplayMode;
+}
+
+void UESCROWSessionSubsystem::SetDisplayModeByIndex(int32 Index)
+{
+	const int32 ClampedIndex = FMath::Clamp(Index, 0, 1);
+	DisplayMode = static_cast<EESCROWDisplayMode>(ClampedIndex);
+}
+
+EESCROWDisplayMode UESCROWSessionSubsystem::GetDisplayMode() const
+{
+	return DisplayMode;
+}
+
+FString UESCROWSessionSubsystem::GetDisplayModeName() const
+{
+	return (DisplayMode == EESCROWDisplayMode::ConsolePrimary) ? TEXT("Console Primary") : TEXT("HUD Primary");
+}
+
+void UESCROWSessionSubsystem::SetVehicleControlRole(EESCROWVehicleControlRole NewVehicleControlRole)
+{
+	VehicleControlRole = NewVehicleControlRole;
+}
+
+void UESCROWSessionSubsystem::SetVehicleControlRoleByIndex(int32 Index)
+{
+	const int32 ClampedIndex = FMath::Clamp(Index, 0, 1);
+	VehicleControlRole = static_cast<EESCROWVehicleControlRole>(ClampedIndex);
+}
+
+EESCROWVehicleControlRole UESCROWSessionSubsystem::GetVehicleControlRole() const
+{
+	return VehicleControlRole;
+}
+
+FString UESCROWSessionSubsystem::GetVehicleControlRoleName() const
+{
+	return (VehicleControlRole == EESCROWVehicleControlRole::NotDriving) ? TEXT("Not Driving") : TEXT("Driving");
 }
 
 bool UESCROWSessionSubsystem::IsSessionActive() const
