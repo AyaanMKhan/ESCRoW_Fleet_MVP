@@ -196,3 +196,31 @@ As of RA31A-1A/1B/GYM-PASS, several items above are superseded:
   export.") and the Reports EXPORT section/Export Mission Log button were confirmed already present and
   working from prior passes; no changes made.
 - No map/minimap/vehicle/follower/C++ files were touched this pass.
+
+## RA33B-2 update note (graph integrity fix + live Report Record)
+
+- **Root cause of the RA32A-2 giant-banner bug**: `Escrow_FollowerAction`'s real, live `ActionId==0`
+  handler was a *different* branch node than the one the RA33B-1 pass had edited. `read_graph_dsl`
+  had printed the RA33B-1 edits inline as if they were the active `ActionId==0` body, but tracing
+  actual pin connections from `FunctionEntry` showed that branch (`IfThenElse_22` and its whole
+  sub-chain, including the RA33B-1 Report Record toggle) had zero incoming exec connection — dead
+  code that never ran. The real button press always executed a separate, untouched branch that
+  still built the full "Callsign: X | State: Y | ..." diagnostic string. **Lesson: do not trust
+  `read_graph_dsl` alone for execution-path truth on this function; verify via direct pin tracing
+  from `FunctionEntry`.**
+- **Cleanup**: removed ~65 proven-unreachable nodes across two dead-code groups (the RA33B-1
+  Report Record toggle attached to the disconnected branch, and the old diagnostic-string builder's
+  now-orphaned tail) after individually confirming each had zero live consumers.
+- **Report Record reimplemented on the real live path.** The panel now shows only `Report Record —
+  F<N>` and `Follow target: <COMMAND or F#>` — deliberately narrower than the original suggested
+  format, because Callsign/State/Autonomy/Objective/Report-ready/Takeover-required are already
+  shown in the always-visible follower-page header, and including them again overflowed into the
+  bottom hint-bar row (confirmed via live PIE screenshot before trimming). Verified open/close on
+  all four follower pages via live PIE screenshots.
+- Report Record no longer writes anything into `HUDMessages`/`HUD_MissionStatusText` — it only
+  toggles its own panel, so it cannot suppress or overwrite a mission/commander message.
+- RA32A-2's containment fixes (wrapping/clipping on the status line, follower header, and Reports/
+  Commander/follower buttons) were confirmed still intact this pass.
+- Follower-feed avatar/hands hiding was not re-attempted — the RA33B-1 tool limitation (cannot
+  create a child-scoped component override for the inherited `Driver` mesh without risking the
+  shared vendor `BP_BaseCar` asset) is unchanged; see the runbook's Known Limitations section.

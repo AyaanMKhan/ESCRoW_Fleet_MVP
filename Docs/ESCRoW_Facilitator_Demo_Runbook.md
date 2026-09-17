@@ -23,6 +23,9 @@ that demands direct control, recovery, report submission, and mission checkpoint
 6. Confirm you can see: the tab bar (MAP / F1 / F2 / F3 / F4 / COMMANDER / REPORTS), the
    persistent status line just below it, the tactical map with fleet markers, and the
    bottom-right minimap with a heading-up arrow and F1–F4 markers.
+7. Before pressing `F5`, an F1-F4 follower tab's persistent status line reads **"Mission not
+   started. Press F5 or open Commander to Start Mission D."** — this is expected and is not a
+   stuck/blank state; it is only shown when no scripted messages have arrived yet.
 
 ## 3. Controls / shortcuts
 
@@ -54,6 +57,23 @@ precisely during this pass (see §6); rehearse this step before a live demo.
 **Note:** the scenario auto-advances on its own timers even without pressing `F6` (Hybrid
 playback mode), so events may arrive slightly ahead of a slow narration — that is expected,
 not a bug.
+
+**Follower pages (F1-F4):** the first action button, labeled **Report Record** (renamed
+from "Request Status"), is a toggle: `Enter` opens a small persistent panel (in the area
+previously showing "LOCATION — grid placeholder") showing two lines — `Report Record — F<N>`
+and `Follow target: <COMMAND or F#>`; `Enter` again closes it. This was verified visually in a
+live PIE session on all four follower pages (RA33B-2). The panel intentionally shows only the
+follow-target field: Callsign, State, Autonomy, Objective, Report-ready, and Takeover-required
+are already visible at all times in the header directly above the live feed, so repeating them
+in the panel would be redundant and (when tried during RA33B-2) overflowed into the bottom
+hint-bar row. Report Record never writes into the persistent mission status line — it only
+shows/hides its own panel, so it cannot cover or replace a mission/commander message that's
+currently displayed there. The mission status line under the tab bar is visible on every
+follower page too, so commander/scenario messages stay visible while monitoring a follower —
+look for it directly under the F1-F4 tab bar, in the same position as on MAP/COMMANDER/REPORTS.
+**Set Follow Target** feedback (e.g. "Follow target selection cancelled.") renders as a small
+muted line under the map/report area instead of a large bold-yellow line — this is a
+presentation-only change; the underlying follow-target logic is unchanged.
 
 ## 4. Recommended 3–5 minute demo sequence
 
@@ -117,7 +137,15 @@ not a bug.
   pause between steps.
 - Occasional single-keypress unresponsiveness (an `Enter` or similar that doesn't seem to
   register on the first press) has been observed during scripted/automated testing of this
-  build; a second press typically works. Don't treat one missed keypress as a broken demo.
+  build; a second press typically works. Don't treat one missed keypress as a broken demo. This
+  was observed again during RA33B-2's automated PIE testing (intermittently on F3 specifically,
+  resolved on retry) while `Up`/`Down`/`Q`/`E` navigation worked reliably — this appears to be
+  specific to automated/scripted input rather than a live keyboard+mouse session. If `Enter`
+  seems unresponsive on a real machine, try clicking once inside the game viewport first, then
+  press `Enter` again.
+- The F1-F4 live feed still shows the driver's arms/hands/steering-wheel-view from the vendor
+  vehicle's occupant mesh — a from-camera view of the vehicle interior, not a clean
+  exterior/road-only feed. This is a known, unresolved limitation (see §7).
 - Do not treat minimap marker clustering (F1-F4 icons overlapping when followers are close
   together) as a mission failure — it is a known, unresolved cosmetic limitation.
 
@@ -133,3 +161,22 @@ not a bug.
   RA32B-1 and did not reproduce — treat it as resolved/non-issue unless a fresh screenshot
   shows otherwise.
 - No packaging/build pass has been done yet — this demo runs from the editor via PIE only.
+- The F1-F4 follower feed shows the vendor vehicle's driver/occupant mesh (arms, hands,
+  steering wheel) rather than a clean exterior-only view. The mesh (`Driver`, defined on the
+  vendor Blueprint `/Game/DD_Vehicles_Basic/Blueprints/Vehicles/BP_BaseCar`, inherited into
+  `BP_ESCROW_FollowerVehicle`) could not be hidden from the feed capture through the available
+  tooling without risking an edit to the shared vendor asset (see RA33B-1 final report for
+  detail); the correct fix is a manual one — open `BP_ESCROW_FollowerVehicle` in the editor,
+  select the inherited `Driver` component in the Class Defaults / Components panel (this
+  creates a proper per-Blueprint override), and set **Hidden in Scene Capture** to true.
+- Report Record's persistent panel is confirmed working, visually, on all four follower pages
+  (RA33B-2, live PIE screenshots). Note for future passes: the RA33B-1 pass had wired this
+  toggle onto a disconnected/dead branch of `Escrow_FollowerAction` — pressing the button never
+  actually reached that code, and the real button handler kept running the old giant-diagnostic
+  message. RA33B-2 traced the real live execution chain from `FunctionEntry` (not just
+  `read_graph_dsl`, which is not reliable for reachability — it will print disconnected/orphaned
+  node chains inline as if they were live), removed the dead branch and its dead-end message
+  construction (~65 nodes total across both), and re-implemented the toggle directly on the
+  live `ActionId==0` path. If Report Record is extended again, verify the edited branch is
+  actually reachable from `FunctionEntry` by tracing pin connections rather than trusting a
+  DSL read alone.
