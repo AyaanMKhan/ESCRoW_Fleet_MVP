@@ -1,190 +1,235 @@
-\# ESCRoW Fleet MVP — Claude Working Notes
+# ESCRoW Fleet MVP — Claude Working Notes
 
+This file is the working orientation for Claude when modifying the ESCRoW Unreal project. It should stay concise, operational, and current. Do not spend tokens restating this file back to the user unless asked; use it to guide scoped implementation work.
 
+## Project identity
 
-This is a UE 5.8 project for an ESCRoW convoy / command-vehicle supervisory-control demonstrator.
+- Repository: `rhyse-bendell/ESCRoW_Fleet_MVP`
+- Local project root: `C:\UnrealProjects\ESCRoW_Fleet_MVP`
+- Unreal project: `ESCRoW_Fleet_MVP.uproject`
+- Unreal version: UE 5.8
+- Main ESCRoW content root: `/Game/ESCROW`
+- Work on `main`. Do not create branches unless explicitly told.
 
+## Purpose of the testbed
 
+ESCRoW is a convoy / command-vehicle supervisory-control research testbed. It is not meant to be an operationally validated military simulator. Its purpose is to create a controllable, lightweight environment where we can study and demonstrate:
 
-\## Current actual project
+- human supervision of multiple semi-autonomous follower vehicles;
+- transitions from monitoring to intervention or takeover;
+- function allocation between autonomy, interface, and human operator;
+- detection of route, vehicle, spacing, communication, and autonomy problems;
+- plan repair when a previously valid waypoint or formation plan becomes infeasible;
+- manual baseline performance before adding AI decision-support scaffolds.
 
-\- Repository: `rhyse-bendell/ESCRoW\_Fleet\_MVP`
+The design target is functional fidelity: preserve the cognitive work of supervisory control without building an unnecessarily heavy or over-realistic world.
 
-\- Project root: `C:\\UnrealProjects\\ESCRoW\_Fleet\_MVP`
+## Current strategic direction
 
-\- Unreal project: `ESCRoW\_Fleet\_MVP.uproject`
+The old desert integration map remains useful as a visual/demo reference, but the experimental pilot should move to a new lightweight map:
 
-\- Unreal version: UE 5.8
+- Legacy/demo map: `/Game/ESCROW/Maps/MAP_ESCROW_DESERT_INTEGRATION_TEST`
+- New pilot target map: `/Game/ESCROW/Maps/MAP_ESCROW_FLAT_PILOT_TEST`
 
-\- Main content root: `/Game/ESCROW`
+The flat pilot map should be driveable, small enough for fast iteration, and visually sufficient: arid test terrain, dirt route, sparse rocks/barriers, rally areas, and clear experimental zones. Do not use heavy environment packs when simple ESCRoW-owned geometry or lightweight existing meshes will work.
 
-\- Work on `main`. Do not create branches unless explicitly told.
+## Core pilot scenario spine
 
+The pilot scenario should support these phases:
 
+1. **Phase A — Normal convoy travel and monitoring**
+   - Command vehicle and followers travel in convoy.
+   - Operator monitors follower identity, spacing, route progress, readiness, autonomy/communication state, and map position.
 
-\## Current working baseline
+2. **Phase B — Rally point B breakout / formation**
+   - Convoy reaches Rally B.
+   - Followers move into planned formation or breakout positions.
+   - Operator verifies the phase transition and formation readiness.
 
-The project currently has a stable asset-integrated foundation:
+3. **Phase C — Movement from B toward C with disruption**
+   - Convoy attempts to proceed toward Rally C.
+   - Route/spacing/autonomy problem appears: obstacle, barricade, narrow passage, irregular spacing, communication degradation, or autonomy failure.
+   - Operator must detect the disruption and identify the affected follower or convoy segment.
 
-\- Main menu map: `/Game/ESCROW/Maps/MAP\_ESCROW\_MAIN\_MENU`
+4. **Phase D — Follower takeover or guided intervention**
+   - Operator selects the affected follower.
+   - Operator takes over, guides, redirects, or otherwise intervenes.
+   - Operator returns the asset/fleet to supervisory mode after the disruption.
 
-\- Playable desert map: `/Game/ESCROW/Maps/MAP\_ESCROW\_DESERT\_INTEGRATION\_TEST`
+5. **Phase E — Rally C plan repair**
+   - Planned positions at Rally C are discovered to be infeasible.
+   - Operator repairs waypoints or selects alternate positions.
+   - Operator validates before execution.
 
-\- Test map: `/Game/ESCROW/Test/MAP\_ESCROW\_ASSET\_INTEGRATION\_TEST`
+6. **Phase F — Closeout / report / readiness reset**
+   - Operator confirms readiness, clears residual warnings, and completes report/closure.
 
-\- Main menu loads the desert integration map.
+Manual baseline comes first. AI-supported supervision comes later.
 
-\- First-person operator view works.
+## Manual baseline versus AI-supported condition
 
-\- `BP\_ESCROW\_CommandVehicle` is enterable and drivable.
+### Manual baseline
 
-\- `BP\_ESCROW\_FollowerVehicle` has `NavMeshVehicleAI` and can follow or move to a target.
+The operator has the standard HUD / console / map / follower / report interfaces, but no proactive AI assistant. The operator must detect, diagnose, select, take over, repair, validate, and report without AI summarization, prioritization, diagnosis, or recommendation.
 
-\- `WBP\_ESCROW\_TestHUD` displays a bottom-right minimap.
+### Later AI-supported condition
 
-\- MapSystem marker smoke test works.
+Use the same scenario spine, but add support such as:
 
-\- Battlefield desert environment opens and runs.
+- convoy-state summary;
+- affected-follower highlight;
+- takeover-needed cue;
+- what-changed message;
+- replan suggestion;
+- validation checklist;
+- report draft.
 
-\- AI follower movement currently works but is slow; tune later, do not rebuild vehicle physics.
+The AI layer should never be the source of experimental truth. Scenario state, event timing, ground truth, and scoring must remain deterministic and logged by ESCRoW systems.
 
+## Immediate implementation priorities
 
+1. **Fix command UI presentation across surfaces.**
+   - HUD currently works best.
+   - Physical console rendering/layout still needs to work reliably.
+   - Virtual tablet fallback should be available if the physical console remains fragile.
+   - The same supervisory state should drive HUD, console, and tablet variants.
 
-\## Current actual ESCROW-owned assets
+2. **Create the lightweight flat pilot map.**
+   - New map: `/Game/ESCROW/Maps/MAP_ESCROW_FLAT_PILOT_TEST`
+   - Must support Rally A/start, Rally B formation, B-to-C disruption corridor, Rally C planned positions, Rally C alternate positions, and closeout/report area.
+   - Use dynamic lighting / no baked lighting.
+   - Do not create or track generated `*_BuiltData` assets.
+
+3. **Implement scenario phase management.**
+   - Deterministic phase flow A-F.
+   - Named zones/triggers for Rally B, disruption onset, takeover requirement, Rally C plan repair, and closeout/report.
+
+4. **Implement manual baseline logging.**
+   - Event onset time, selected follower, page/view state, detection latency, takeover initiation, wrong-follower selection, control duration, waypoint repair, validation, report closure, and residual-warning handling.
+
+5. **Add AI support only after manual baseline is stable.**
+
+## Current important ESCRoW-owned assets
 
 Core:
 
-\- `/Game/ESCROW/Blueprints/Core/BP\_ESCROW\_GameMode`
-
-\- `/Game/ESCROW/Blueprints/Core/BP\_ESCROW\_PlayerController`
-
-\- `/Game/ESCROW/Blueprints/Core/BP\_ESCROW\_OperatorCharacter`
-
-\- `/Game/ESCROW/Blueprints/Core/BP\_ESCROW\_MenuGameMode`
-
-\- `/Game/ESCROW/Blueprints/Core/BP\_ESCROW\_MenuPlayerController`
-
-
+- `/Game/ESCROW/Blueprints/Core/BP_ESCROW_GameMode`
+- `/Game/ESCROW/Blueprints/Core/BP_ESCROW_PlayerController`
+- `/Game/ESCROW/Blueprints/Core/BP_ESCROW_OperatorCharacter`
+- `/Game/ESCROW/Blueprints/Core/BP_ESCROW_MenuGameMode`
+- `/Game/ESCROW/Blueprints/Core/BP_ESCROW_MenuPlayerController`
 
 Vehicles:
 
-\- `/Game/ESCROW/Blueprints/Vehicles/BP\_ESCROW\_CommandVehicle`
-
-\- `/Game/ESCROW/Blueprints/Followers/BP\_ESCROW\_FollowerVehicle`
-
-
+- `/Game/ESCROW/Blueprints/Vehicles/BP_ESCROW_CommandVehicle`
+- `/Game/ESCROW/Blueprints/Followers/BP_ESCROW_FollowerVehicle`
 
 UI:
 
-\- `/Game/ESCROW/Blueprints/UI/WBP\_ESCROW\_MainMenu`
+- `/Game/ESCROW/Blueprints/UI/WBP_ESCROW_MainMenu`
+- `/Game/ESCROW/Blueprints/UI/WBP_ESCROW_TestHUD`
+- `/Game/ESCROW/Blueprints/UI/WBP_ESCROW_CommandHUD`
+- `/Game/ESCROW/Blueprints/UI/WBP_ESCROW_ExperimentSetup`
+- `/Game/ESCROW/Blueprints/UI/WBP_ESCROW_PhysicalConsoleMirror`
+- `/Game/ESCROW/Blueprints/UI/BP_MapHelper_Child_ESCROW`
+- `/Game/ESCROW/Blueprints/UI/BP_MapZone_Child_ESCROW`
+- `/Game/ESCROW/Blueprints/UI/BP_MapCustomMarker_Child_ESCROW`
 
-\- `/Game/ESCROW/Blueprints/UI/WBP\_ESCROW\_TestHUD`
+## Marketplace / external asset roles
 
-\- `/Game/ESCROW/Blueprints/UI/BP\_MapHelper\_Child\_ESCROW`
+- `DD_Vehicles_Basic`: drivable vehicle base. Use only through ESCRoW child/wrapper Blueprints.
+- `NavMeshVehicleAI`: low-level AI vehicle movement. Use through `BP_ESCROW_FollowerVehicle` or an ESCRoW adapter.
+- `MapSystem`: minimap / marker layer. Keep functional; do not over-polish unless required for the current pass.
+- `BattleField_Desert`: legacy/demo environment kit. Do not build the pilot map around heavy dependency on this pack.
+- `CLM_MenuSystem`: menu plugin; current menu flow is minimal and ESCRoW-owned.
 
-\- `/Game/ESCROW/Blueprints/UI/BP\_MapZone\_Child\_ESCROW`
+## Hard rules
 
-\- `/Game/ESCROW/Blueprints/UI/BP\_MapCustomMarker\_Child\_ESCROW`
+- Do not edit marketplace/vendor asset source folders directly.
+- Do not rewrite vendor Blueprints.
+- Do not inspect or reproduce internal marketplace Blueprint graphs for assets marked AI usage not allowed.
+- Use ESCRoW-owned child Blueprints, wrapper Blueprints, adapter components, widgets, structs, and managers.
+- Preserve working behavior unless explicitly asked to change it.
+- Keep changes narrow and testable.
+- Do not use Save All.
+- Save only assets intentionally modified for the current pass.
+- Do not commit or stage unless explicitly told.
+- Do not create branches unless explicitly told.
+- Do not replace the project base again.
+- Do not spend time on visual polish before mechanics pass.
+- First inspect, then propose, then modify.
 
+## LFS / repository hygiene rules
 
+Generated Unreal built-data is not versioned.
 
-\## Installed / integrated asset roles
+- Do not add or track `*_BuiltData.uasset`, `*_BuiltData.ubulk`, or `*_BuiltData.uexp`.
+- Do not build baked/static lighting for pilot maps.
+- Use dynamic/movable lighting for pilot maps.
+- Do not create large baked-lighting files.
+- Do not commit generated folders such as `Saved/`, `Intermediate/`, `DerivedDataCache/`, `Binaries/`, `.vs/`, `LFS_AUDIT/`, or `LFS_AUDIT_REPORT.zip`.
+- Keep screenshots, videos, rendered docs, and temporary exports out of this repo unless explicitly requested.
 
-\- `DD\_Vehicles\_Basic`: Drivable Cars military vehicle base. Use through ESCROW child/wrapper Blueprints only.
+## Current dirty/quarantine risk areas
 
-\- `NavMeshVehicleAI`: low-level AI vehicle movement. Use through `BP\_ESCROW\_FollowerVehicle` and later an ESCROW-owned adapter.
+Before staging or committing, always inspect `git status --short` and separate intended changes from existing dirty assets.
 
-\- `MapSystem`: current minimap / marker layer. Keep it functional but do not over-polish yet.
+Known recurring dirty/out-of-scope areas include:
 
-\- `BattleField\_Desert`: environment / route kit.
+- `Content/DD_Vehicles_Basic/...` vendor assets;
+- `Content/ESCROW/Maps/MAP_ESCROW_DESERT_INTEGRATION_TEST.umap`;
+- `Content/ESCROW/Blueprints/Core/BP_ESCROW_FeedCaptureManager.uasset`;
+- `Content/ESCROW/Blueprints/Followers/BP_ESCROW_FollowerVehicle.uasset`;
+- UI assets not in the current pass;
+- docs not in the current pass.
 
-\- `CLM\_MenuSystem`: menu plugin enabled, but current menu flow is minimal and ESCROW-owned.
+Do not include these in a commit unless the user explicitly approves them as part of the pass.
 
+## Architecture target
 
+Use the hybrid architecture already in progress:
 
-\## Hard rules
+- C++ owns stable ESCRoW runtime state and logging systems when available.
+- `UESCROWSessionSubsystem` stores participant/session/selected-mission state.
+- `UESCROWFleetSubsystem` is the authoritative world-specific state, command, message, report, and takeover-lock bus for F1-F4.
+- `UESCROWPlayerControlRouterComponent` is the only object/component allowed to change player control mode.
+- `UESCROWEventLogSubsystem` handles structured logging.
+- Blueprint/UMG owns HUD layout, console/tablet presentation, follower cards/tabs, map panels, feed panels, vehicle wrappers, camera presentation, and marketplace-asset adapters.
+- `BP_ScenarioDirector` or an ESCRoW-owned scenario manager should own deterministic mission timing and scenario phase flow.
 
-\- Do not edit marketplace/vendor asset source folders directly.
+Ask before adding new C++ outside an approved pass.
 
-\- Do not rewrite vendor Blueprints.
+## MCP / Claude workflow
 
-\- Do not inspect or reproduce internal marketplace Blueprint graphs for assets marked AI usage not allowed.
+- Unreal must be open.
+- Unreal MCP server should be running at `http://127.0.0.1:8000/mcp`.
+- Use serial tool calls only; do not issue overlapping Unreal MCP operations.
+- Inspect relevant assets before modifying them.
+- Keep final reports concise and action-oriented.
+- Report exactly what changed, what should be tested, and what files are safe or unsafe to commit.
+- After the user confirms the pass condition, ask the user before committing.
 
-\- Use ESCROW-owned child Blueprints, wrapper Blueprints, adapter components, widgets, structs, and managers.
+## Reporting format after each pass
 
-\- Preserve working behavior unless explicitly asked to change it.
+Use this structure and avoid unnecessary narration:
 
-\- Keep changes narrow and testable.
+1. Goal attempted.
+2. Files created/modified.
+3. What changed.
+4. What was not touched.
+5. Test performed / not performed.
+6. Current `git status --short` summary.
+7. Safe-to-commit files, if any.
+8. Must-not-commit files.
+9. Next recommended pass.
 
-\- Compile and save after every focused pass.
+## Near-term build sequence
 
-\- C++ is the intended home for ESCRoW core types and the `UESCROWSessionSubsystem` / `UESCROWFleetSubsystem` / `UESCROWPlayerControlRouterComponent` / `UESCROWEventLogSubsystem` runtime systems, built via the bounded RA passes in `/Docs/ESCRoW\_Robust\_Long\_Term\_MVP\_Build\_Queue.md`. Still ask before adding any C++ class outside that queue.
-
-\- If a plugin blocks progress for more than one focused work session, use the fallback path and keep moving.
-
-\- Do not spend time on visual polish before mechanics pass.
-
-\- Do not replace the project base again.
-
-
-
-\## Current known issues / deferred polish
-
-\- MapSystem background/texture is placeholder-looking.
-
-\- Minimap zoom/capture should be configured later through `BP\_MapZone` / capture settings / map texture.
-
-\- AI follower is slow on desert terrain; tune `NavMeshVehicleAI` exposed speed/throttle/acceptance settings later.
-
-\- Command vehicle defaults to third-person vehicle view after entering; first-person/inside vehicle camera should be fixed later.
-
-\- Only one follower is currently proven; final MVP needs F1-F4.
-
-
-
-\## Architecture target
-
-The project uses an intentional robust/hybrid architecture. This supersedes the earlier interaction-first, Blueprint-only plan. Long-term correctness and maintainability take priority over rapid Blueprint-only prototyping:
-
-\- Source-controlled C++ owns stable ESCRoW core types and runtime systems:
-
-  \- `UESCROWSessionSubsystem` stores participant/session/selected-mission state.
-
-  \- `UESCROWFleetSubsystem` is the authoritative world-specific state, command, message, report, and takeover-lock bus for F1-F4.
-
-  \- `UESCROWPlayerControlRouterComponent` is the only object/component allowed to change player control mode.
-
-  \- `UESCROWEventLogSubsystem` handles structured logging.
-
-\- Blueprint/UMG remains responsible for HUD layout, follower cards/tabs, map panels, feed panels, vehicle wrappers, camera presentation, and marketplace-asset adapters. Blueprints call into the C++ subsystems/components above rather than re-implementing their state or logic.
-
-\- Marketplace/vendor assets (`DD\_Vehicles\_Basic`, `NavMeshVehicleAI`, `MapSystem`, `BattleField\_Desert`, `CLM\_MenuSystem`) remain black boxes. ESCRoW-owned wrapper/adapter Blueprints or components are the only integration point; never edit vendor source or reproduce internal vendor graphs.
-
-\- Player starts at a main menu, selects Mission A-D, loads into the command-vehicle scenario, supervises four followers, sees them on a minimap, receives directives, assigns tasks, opens follower feeds, and performs remote takeover of a follower (F3 first) one at a time when required.
-
-\- `BP\_ScenarioDirector` (Blueprint, driven by the C++ subsystems above) owns deterministic mission timing.
-
-\- Work proceeds in bounded RA (Robust Architecture) passes, each requiring manual approval before starting and a build/test/commit checkpoint before the next pass begins.
-
-
-
-\## Near-term build sequence
-
-Superseded by the RA build queue in `/Docs/ESCRoW\_Robust\_Long\_Term\_MVP\_Build\_Queue.md`. That document (RA00-RA23) is the authoritative pass-by-pass sequence going forward. Do not resume the old P01-P10 Blueprint-only sequence.
-
-
-
-\## MCP / Claude workflow
-
-\- Unreal must be open.
-
-\- Unreal MCP server should be running on `http://127.0.0.1:8000/mcp`.
-
-\- Use serial tool calls only. Do not issue overlapping Unreal MCP operations.
-
-\- First inspect, then propose, then modify.
-
-\- After modifying assets, report exactly what changed and what should be tested.
-
-\- After the user confirms the pass condition, ask the user to commit.
-
+1. Update and stabilize shared command UI across HUD, physical console, and virtual tablet fallback.
+2. Create `/Game/ESCROW/Maps/MAP_ESCROW_FLAT_PILOT_TEST` as the lightweight pilot map.
+3. Add scenario markers/zones for phases A-F.
+4. Route command/follower spawn and follower staging to the pilot map.
+5. Implement one primary disruption: obstacle/constrained passage causing irregular spacing or takeover requirement.
+6. Add Rally C plan-repair / waypoint-reset interaction.
+7. Add deterministic logging for manual baseline.
+8. Only then add AI support scaffolds.
