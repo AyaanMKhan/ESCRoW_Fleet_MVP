@@ -29,3 +29,12 @@ Packaged/
 # OS
 .DS_Store
 Thumbs.db
+
+# Unreal generated/baked map data - do not version
+*_BuiltData.uasset
+*_BuiltData.ubulk
+*_BuiltData.uexp
+
+# Local audit artifacts
+LFS_AUDIT/
+LFS_AUDIT_REPORT.zip
