@@ -199,6 +199,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
 	bool RecordHeartbeat(const FESCROWHeartbeatRecord& Record);
 
+	// RA41B: Blueprint-callable heartbeat with primitive params, matching the
+	// pattern of the other Record*Simple functions. Fleet CV/F1-F4 telemetry is
+	// filled in automatically from UESCROWFleetSubsystem (see PopulateFleetTelemetry);
+	// callers only need to supply UI/tasking context. The automatic 1Hz timer
+	// (StartHeartbeat/HeartbeatTimerTick) calls RecordHeartbeatNow, which now also
+	// populates fleet telemetry, so this function is for explicit/manual calls only.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordHeartbeatSimple(const FString& Phase, const FString& ActivePage, int32 SelectedFollowerID, const FString& TaskingID, const FString& TaskingState, const FString& PlanValidity, const FString& PayloadJSON);
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
 	bool RecordStateTransition(const FESCROWStateTransitionRecord& Record);
 
@@ -243,6 +252,21 @@ private:
 	bool WriteWholeFile(const FString& FileName, const FString& Content) const;
 	FString GetCurrentPhaseFromScenarioDirector() const;
 	void HeartbeatTimerTick();
+
+	// RA41B: fills CVLocation/F1-F4 Location/SpeedCms from UESCROWFleetSubsystem and
+	// merges per-follower mode/readiness/comm/alert into R.PayloadJSON as a
+	// "FleetTelemetry" JSON object (preserving any caller-supplied PayloadJSON under
+	// a "Caller" key). No-ops (leaves fields blank/UNSET) if FleetSubsystem or a given
+	// follower's ActorRef is unavailable.
+	void PopulateFleetTelemetry(FESCROWHeartbeatRecord& R) const;
+
+	// RA41B: best-effort command-vehicle location. There is no direct CV actor
+	// reference on UESCROWFleetSubsystem; this looks for a follower whose
+	// CurrentFollowTargetID == 0 (follows the command vehicle) and reads its cached
+	// FollowTargetActorRef. Returns false if no such reference is currently known.
+	bool TryGetCommandVehicleLocation(FVector& OutLocation) const;
+
+	static FString FormatLocation(const FVector& Location);
 
 	int32 RunConfigCounterForRecordIDs = 0;
 	FTimerHandle HeartbeatTimerHandle;

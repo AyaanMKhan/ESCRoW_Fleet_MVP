@@ -13,6 +13,18 @@ namespace
 	const FString Milestone_F3TakeoverActive = TEXT("F3TakeoverActive");
 	const FString Milestone_F3ReturnComplete = TEXT("F3ReturnComplete");
 	constexpr float ScenarioTickInterval = 0.25f;
+
+	// RA41B PART 1: menu/setup vs. pilot/scenario map detection. Substring match
+	// so this is robust to the "UEDPIE_N_" prefix PIE adds to World->GetMapName().
+	bool IsMenuOrSetupMap(const FString& MapName)
+	{
+		return MapName.Contains(TEXT("MAIN_MENU")) || MapName.Contains(TEXT("_MENU"));
+	}
+
+	bool IsPilotOrScenarioMap(const FString& MapName)
+	{
+		return MapName.Contains(TEXT("FLAT_PILOT_TEST")) || MapName.Contains(TEXT("DESERT_INTEGRATION_TEST"));
+	}
 }
 
 void UESCROWScenarioDirectorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -38,65 +50,91 @@ void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()
 		return;
 	}
 
+	const FString RawMapName = World ? World->GetMapName() : FString();
+	const bool bIsMenuMap = IsMenuOrSetupMap(RawMapName);
+	const bool bIsScenarioMap = IsPilotOrScenarioMap(RawMapName);
+
+	// RA41B PART 1 guardrail. See CLAUDE.md / RA41B pass notes for the four cases:
+	// (1) pending config -> promote & start normally, fallback=false.
+	// (2) no pending config, on a pilot/scenario map, editor/PIE only -> dev fallback.
+	// (3) no pending config, on the menu/setup map -> do nothing, EventLog stays inactive.
+	// (4) no pending config outside editor/development -> fail closed, no run created.
 	FESCROWRunConfig RunConfig;
 	bool bFoundPending = false;
 	Session->PromotePendingRunConfigToCurrent(RunConfig, bFoundPending);
 
-	bool bUsedFallback = false;
-	if (!bFoundPending)
+	if (bFoundPending)
 	{
-		// PIE launched directly into the level, or the menu path was skipped:
-		// build a safe placeholder dev run rather than leaving the run unstarted.
-		bUsedFallback = true;
+		if (RunConfig.RunID.IsEmpty())
+		{
+			RunConfig.RunID = Session->GenerateRunID(RunConfig.ScenarioID, RunConfig.ConditionID, RunConfig.ParticipantID);
+		}
+		if (RunConfig.MapName.IsEmpty())
+		{
+			RunConfig.MapName = RawMapName;
+		}
+		if (RunConfig.CreatedAt.GetTicks() == 0)
+		{
+			RunConfig.CreatedAt = FDateTime::Now();
+		}
+		if (RunConfig.RunValidity.IsEmpty())
+		{
+			RunConfig.RunValidity = TEXT("Valid");
+		}
 
+		EventLog->BeginRunFromConfig(RunConfig);
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("RunInitialized"), TEXT("Level loaded and run initialized from menu-provided config"), FString(), 0, TEXT("Unspecified"), TEXT("{\"fallback\":false}"));
+		EventLog->StartHeartbeat();
+		return;
+	}
+
+	if (bIsScenarioMap)
+	{
+		if (!GIsEditor)
+		{
+			// Case 4: outside editor/development. Fail closed rather than silently
+			// producing pilot-valid-looking data with no real run configuration.
+			UE_LOG(LogTemp, Error, TEXT("ESCROWScenarioDirector: scenario map %s loaded with no pending run config outside the editor. Refusing to start an unattributed run; EventLog left inactive."), *RawMapName);
+			return;
+		}
+
+		// Case 2: editor/PIE development fallback, clearly marked as such.
 		RunConfig = FESCROWRunConfig();
-		RunConfig.ParticipantID = Session->GetParticipantID().IsEmpty() ? TEXT("PILOT") : Session->GetParticipantID();
+		RunConfig.ParticipantID = TEXT("DEV");
 		RunConfig.ResearcherID = Session->GetResearcherID().IsEmpty() ? TEXT("UNSET") : Session->GetResearcherID();
 		RunConfig.SessionID = Session->GetSessionID();
 		RunConfig.ScenarioID = TEXT("DEV_NO_PENDING_CONFIG");
 		RunConfig.ScenarioVersion = TEXT("dev");
-		RunConfig.ConditionID = Session->GetConditionSummary();
+		RunConfig.ConditionID = TEXT("DEV_FALLBACK");
 		RunConfig.SupportMode = TEXT("ManualBaseline");
 		RunConfig.DisplayMode = Session->GetDisplayModeName();
 		RunConfig.VehicleControlRole = Session->GetVehicleControlRoleName();
 		RunConfig.WorkloadLevel = TEXT("Unspecified");
-		RunConfig.ScenarioVariant = TEXT("FlatPilot");
+		RunConfig.ScenarioVariant = RawMapName.Contains(TEXT("FLAT_PILOT")) ? TEXT("FlatPilot") : TEXT("DesertIntegration");
 		RunConfig.EventSalience = TEXT("Unspecified");
 		RunConfig.UncertaintyLevel = TEXT("Unspecified");
-		RunConfig.MapName = World ? World->GetMapName() : TEXT("UNKNOWN");
+		RunConfig.MapName = RawMapName;
 		RunConfig.CreatedAt = FDateTime::Now();
-		RunConfig.Notes = TEXT("Auto-generated fallback: no pending run config found at level load.");
+		RunConfig.RunValidity = TEXT("DevelopmentOnly");
+		RunConfig.Notes = TEXT("Fallback run: scenario map launched directly without going through the setup menu (no pending run config was found).");
 		RunConfig.RunID = Session->GenerateRunID(RunConfig.ScenarioID, RunConfig.ConditionID, RunConfig.ParticipantID);
 
-		Session->SetPendingRunConfig(RunConfig);
-		Session->PromotePendingRunConfigToCurrent(RunConfig, bFoundPending);
+		EventLog->BeginRunFromConfig(RunConfig);
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("FallbackRunConfigUsed"), TEXT("Scenario map launched without the setup menu; development-only fallback run config generated"), FString(), 0, TEXT("DevelopmentOnly"), TEXT("{\"fallback\":true}"));
+		EventLog->StartHeartbeat();
+		return;
 	}
 
-	if (RunConfig.RunID.IsEmpty())
+	if (bIsMenuMap)
 	{
-		RunConfig.RunID = Session->GenerateRunID(RunConfig.ScenarioID, RunConfig.ConditionID, RunConfig.ParticipantID);
-	}
-	if (RunConfig.MapName.IsEmpty() && World)
-	{
-		RunConfig.MapName = World->GetMapName();
-	}
-	if (RunConfig.CreatedAt.GetTicks() == 0)
-	{
-		RunConfig.CreatedAt = FDateTime::Now();
+		// Case 3: sitting at the main menu with no pending config is the normal
+		// pre-session state. Do not create a run folder or touch EventLog.
+		UE_LOG(LogTemp, Log, TEXT("ESCROWScenarioDirector: menu map %s loaded with no pending run config; EventLog left inactive (normal pre-session state)."), *RawMapName);
+		return;
 	}
 
-	EventLog->BeginRunFromConfig(RunConfig);
-
-	EventLog->RecordScenarioEventSimple(
-		CurrentScenarioStep,
-		TEXT("RunInitialized"),
-		TEXT("Level loaded and run initialized"),
-		FString(),
-		0,
-		TEXT("Unspecified"),
-		bUsedFallback ? TEXT("{\"fallback\":true}") : TEXT("{\"fallback\":false}"));
-
-	EventLog->StartHeartbeat();
+	// Unrecognized map with no pending config: be conservative rather than guess.
+	UE_LOG(LogTemp, Warning, TEXT("ESCROWScenarioDirector: unrecognized map %s loaded with no pending run config; EventLog left inactive."), *RawMapName);
 }
 
 void UESCROWScenarioDirectorSubsystem::Deinitialize()
@@ -109,6 +147,12 @@ UESCROWFleetSubsystem* UESCROWScenarioDirectorSubsystem::GetFleet() const
 {
 	const UWorld* World = GetWorld();
 	return World ? World->GetSubsystem<UESCROWFleetSubsystem>() : nullptr;
+}
+
+UESCROWEventLogSubsystem* UESCROWScenarioDirectorSubsystem::GetEventLog() const
+{
+	const UGameInstance* GameInstance = GetWorld() ? GetWorld()->GetGameInstance() : nullptr;
+	return GameInstance ? GameInstance->GetSubsystem<UESCROWEventLogSubsystem>() : nullptr;
 }
 
 void UESCROWScenarioDirectorSubsystem::InitializeScenario()
@@ -246,6 +290,10 @@ bool UESCROWScenarioDirectorSubsystem::StartScenario(EESCROWScenarioPlaybackMode
 	RunState = EESCROWScenarioRunState::Running;
 
 	LogScenarioEvent(TEXT("Started"), 0, FString::Printf(TEXT("Scenario started in %s mode."), *GetPlaybackModeText()));
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("ScenarioStarted"), FString::Printf(TEXT("Scenario started in %s mode."), *GetPlaybackModeText()), FString(), 0, TEXT("Unspecified"), FString());
+	}
 
 	StartTimerIfNeeded();
 
@@ -266,6 +314,10 @@ bool UESCROWScenarioDirectorSubsystem::PauseScenario()
 	ClearTimer();
 
 	LogScenarioEvent(TEXT("Paused"), 0, TEXT("Scenario paused."));
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("ScenarioPaused"), TEXT("Scenario paused."), FString(), 0, TEXT("Unspecified"), FString());
+	}
 	return true;
 }
 
@@ -280,6 +332,10 @@ bool UESCROWScenarioDirectorSubsystem::ResumeScenario()
 	StartTimerIfNeeded();
 
 	LogScenarioEvent(TEXT("Resumed"), 0, TEXT("Scenario resumed."));
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("ScenarioResumed"), TEXT("Scenario resumed."), FString(), 0, TEXT("Unspecified"), FString());
+	}
 	return true;
 }
 
@@ -297,6 +353,10 @@ bool UESCROWScenarioDirectorSubsystem::StopScenario()
 	RunState = EESCROWScenarioRunState::Ready;
 
 	LogScenarioEvent(TEXT("Stopped"), 0, TEXT("Scenario stopped."));
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("ScenarioEnded"), TEXT("Scenario stopped by operator."), FString(), 0, TEXT("Unspecified"), FString());
+	}
 	return true;
 }
 
@@ -321,12 +381,23 @@ bool UESCROWScenarioDirectorSubsystem::ResetScenario(FString& OutStatusMessage)
 	RunState = bScenarioLoaded ? EESCROWScenarioRunState::Ready : EESCROWScenarioRunState::NotLoaded;
 
 	LogScenarioEvent(TEXT("Reset"), 0, TEXT("Scenario reset."));
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("ScenarioReset"), TEXT("Scenario reset."), FString(), 0, TEXT("Unspecified"), FString());
+	}
 	OutStatusMessage = TEXT("Scenario reset.");
 	return true;
 }
 
 void UESCROWScenarioDirectorSubsystem::EnterEventState(const FESCROWScenarioEvent& Event, bool bManualOverrideOfWait)
 {
+	// RA41B PART 4: captured before mutation so PhaseChanged/AffectedFollowerChanged
+	// can report accurate old->new values. Purely additive - does not change any
+	// existing control flow below.
+	UESCROWEventLogSubsystem* EventLogForHooks = GetEventLog();
+	const FString OldPhase = CurrentScenarioStep;
+	const int32 OldSelectedFollowerID = GetFleet() ? GetFleet()->SelectedFollowerID : -1;
+
 	CurrentEventIndex = Event.EventIndex;
 	CurrentScenarioStep = Event.EventLabel;
 	CurrentEventMessageText = Event.MessageText;
@@ -387,6 +458,52 @@ void UESCROWScenarioDirectorSubsystem::EnterEventState(const FESCROWScenarioEven
 		bScenarioRunning = false;
 		ClearTimer();
 		LogScenarioEvent(TEXT("Complete"), 0, TEXT("Scenario complete."));
+	}
+
+	// RA41B PART 4: structured scenario-truth records for this event, additive
+	// only - none of the above gameplay/state logic is affected by this block.
+	if (EventLogForHooks)
+	{
+		if (OldPhase != CurrentScenarioStep)
+		{
+			EventLogForHooks->RecordStateTransitionSimple(TEXT("Scenario"), TEXT("Phase"), TEXT("Phase"), OldPhase, CurrentScenarioStep, TEXT("ScenarioDirector"), Event.EventID);
+			EventLogForHooks->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("PhaseChanged"), FString::Printf(TEXT("%s -> %s"), *OldPhase, *CurrentScenarioStep), FString(), Event.FollowerID, TEXT("Unspecified"), FString());
+		}
+
+		const int32 NewSelectedFollowerID = Fleet ? Fleet->SelectedFollowerID : -1;
+		if (NewSelectedFollowerID != OldSelectedFollowerID)
+		{
+			EventLogForHooks->RecordStateTransitionSimple(TEXT("Fleet"), TEXT("SelectedFollower"), TEXT("AffectedFollowerID"), FString::FromInt(OldSelectedFollowerID), FString::FromInt(NewSelectedFollowerID), TEXT("ScenarioDirector"), Event.EventID);
+			EventLogForHooks->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("AffectedFollowerChanged"), FString::Printf(TEXT("Selected follower %d -> %d"), OldSelectedFollowerID, NewSelectedFollowerID), FString(), NewSelectedFollowerID, TEXT("Unspecified"), FString());
+		}
+
+		if (Event.EventType == TEXT("CommanderMessage") && Event.FollowerID >= 1)
+		{
+			EventLogForHooks->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("TaskingPosted"), Event.MessageText, Event.EventID, Event.FollowerID, TEXT("Unspecified"), FString());
+		}
+		else if (Event.EventType == TEXT("FollowerObjectiveUpdate"))
+		{
+			// No distinct "acknowledge" gameplay step exists yet; this fires when the
+			// follower's objective/state is updated to reflect it acting on the
+			// tasking, which is the closest existing lifecycle hook.
+			EventLogForHooks->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("TaskingAcknowledged"), Event.MessageText, Event.EventID, Event.FollowerID, TEXT("Unspecified"), FString());
+		}
+		else if (Event.EventType == TEXT("ReportReady"))
+		{
+			// No distinct "validated"/"authorized" operator step exists yet either;
+			// ReportReady is the closest existing signal that a tasking's result is done.
+			EventLogForHooks->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("TaskingCompleted"), Event.MessageText, Event.EventID, Event.FollowerID, TEXT("Unspecified"), FString());
+		}
+
+		if (!bWaitingForMilestone)
+		{
+			EventLogForHooks->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("EventTriggered"), Event.MessageText, Event.EventID, Event.FollowerID, TEXT("Unspecified"), FString());
+		}
+
+		if (RunState == EESCROWScenarioRunState::Complete)
+		{
+			EventLogForHooks->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("ScenarioEnded"), TEXT("Scenario reached its final scripted event."), FString(), 0, TEXT("Unspecified"), FString());
+		}
 	}
 }
 
@@ -456,6 +573,10 @@ bool UESCROWScenarioDirectorSubsystem::CheckMilestoneAdvance()
 	}
 
 	LogScenarioEvent(TEXT("MilestoneSatisfied"), 3, WaitingMilestoneName);
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("EventResolved"), FString::Printf(TEXT("Milestone satisfied: %s"), *WaitingMilestoneName), FString(), 3, TEXT("Unspecified"), FString());
+	}
 	bWaitingForMilestone = false;
 	WaitingMilestoneName.Empty();
 
@@ -464,12 +585,7 @@ bool UESCROWScenarioDirectorSubsystem::CheckMilestoneAdvance()
 
 void UESCROWScenarioDirectorSubsystem::LogScenarioEvent(const FString& ScenarioLogType, int32 FollowerID, const FString& Detail)
 {
-	UESCROWEventLogSubsystem* EventLog = nullptr;
-	if (const UGameInstance* GameInstance = GetWorld() ? GetWorld()->GetGameInstance() : nullptr)
-	{
-		EventLog = GameInstance->GetSubsystem<UESCROWEventLogSubsystem>();
-	}
-
+	UESCROWEventLogSubsystem* EventLog = GetEventLog();
 	if (!EventLog)
 	{
 		return;

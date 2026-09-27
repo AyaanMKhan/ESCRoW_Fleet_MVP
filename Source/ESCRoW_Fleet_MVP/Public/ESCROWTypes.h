@@ -561,6 +561,12 @@ struct FESCROWRunConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
 	FString Notes;
+
+	// RA41B: "Valid" for a real menu-derived run, "DevelopmentOnly" for the
+	// editor/PIE direct-scenario-map fallback. Empty/unset for older configs;
+	// treated as "Valid" by the promotion path in that case.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString RunValidity;
 };
 
 // --- RA41A structured data-manager record types ---
@@ -606,6 +612,23 @@ struct FESCROWScenarioEventRecord
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
 	FString PayloadJSON;
+
+	// RA41B: standardized common fields (see ESCROWEventLogSubsystem RA41B section).
+	// -1 = not available; consumers should fall back to WorldSeconds.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float ScenarioTimeSeconds = -1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceSystem;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceObject;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EventID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RelatedEventID;
 };
 
 USTRUCT(BlueprintType)
@@ -648,6 +671,19 @@ struct FESCROWParticipantActionRecord
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
 	FString PayloadJSON;
+
+	// RA41B: standardized common fields. Source (above) serves as SourceSystem.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float ScenarioTimeSeconds = -1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceObject;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString Phase;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RelatedEventID;
 };
 
 USTRUCT(BlueprintType)
@@ -687,6 +723,25 @@ struct FESCROWUIExposureRecord
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
 	FString PayloadJSON;
+
+	// RA41B: standardized common fields.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float ScenarioTimeSeconds = -1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceSystem;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceObject;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString Phase;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString TaskingID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EventID;
 };
 
 USTRUCT(BlueprintType)
@@ -726,6 +781,55 @@ struct FESCROWHeartbeatRecord
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
 	FString PayloadJSON;
+
+	// RA41B: standardized common fields.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float ScenarioTimeSeconds = -1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceSystem;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceObject;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EventID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RelatedEventID;
+
+	// RA41B: "CV" plus one entry per follower (1-4), formatted "X,Y,Z" in cm,
+	// or empty if the actor could not be resolved. See
+	// UESCROWEventLogSubsystem::TryGetCommandVehicleLocation for how CV location
+	// is derived (there is no direct command-vehicle actor reference on
+	// UESCROWFleetSubsystem).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager|Heartbeat")
+	FString CVLocation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager|Heartbeat")
+	FString F1Location;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager|Heartbeat")
+	FString F2Location;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager|Heartbeat")
+	FString F3Location;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager|Heartbeat")
+	FString F4Location;
+
+	// Speed in cm/s, derived from AActor::GetVelocity().Size(). -1 = unavailable.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager|Heartbeat")
+	float F1SpeedCms = -1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager|Heartbeat")
+	float F2SpeedCms = -1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager|Heartbeat")
+	float F3SpeedCms = -1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager|Heartbeat")
+	float F4SpeedCms = -1.0f;
 };
 
 USTRUCT(BlueprintType)
@@ -765,6 +869,22 @@ struct FESCROWStateTransitionRecord
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
 	FString RelatedEventID;
+
+	// RA41B: standardized common fields. Source (above) serves as SourceSystem.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString PayloadJSON;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float ScenarioTimeSeconds = -1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceObject;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString Phase;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EventID;
 };
 
 USTRUCT(BlueprintType)
@@ -804,4 +924,23 @@ struct FESCROWReportRecord
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
 	FString PayloadJSON;
+
+	// RA41B: standardized common fields.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float ScenarioTimeSeconds = -1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceSystem;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString SourceObject;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString Phase;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EventID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RelatedEventID;
 };

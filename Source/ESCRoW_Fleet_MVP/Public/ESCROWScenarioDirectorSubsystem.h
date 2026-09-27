@@ -171,6 +171,9 @@ private:
 	void ClearTimer();
 	void EnterEventState(const FESCROWScenarioEvent& Event, bool bManualOverrideOfWait);
 	UESCROWFleetSubsystem* GetFleet() const;
+
+	// RA41B PART 4: shared lookup for the scenario-truth EventLog hooks below.
+	class UESCROWEventLogSubsystem* GetEventLog() const;
 	static FString FormatMissionTime(float Seconds);
 	FString RunStateToText() const;
 };
