@@ -287,3 +287,380 @@ As of RA31A-1A/1B/GYM-PASS, several items above are superseded:
   pass). Correctness rests on the wiring being structurally identical to the already-proven
   Mission Condition/Complexity pattern.
 - No new Blueprint compile errors or Accessed-None runtime errors.
+
+## RA36B-1 update note (manual Switch Seat foundation)
+
+- New key **`N`** (preferred `X` was already bound to `Escrow_Cancel`) toggles a new plain bool
+  `bESCROWInPassengerConsoleSeat` on `BP_ESCROW_PlayerController` via a new `Escrow_ToggleSeat`
+  function — deliberately not reusing `UESCROWPlayerControlRouterComponent`'s
+  `CurrentPlayerMode`, since that enum already drives an unrelated HUD-interaction state machine
+  and reusing it would have risked cross-talk.
+- Camera switches correctly both directions in live PIE (driver cockpit ↔ passenger/console
+  view, the latter showing the `Console_Display` panel) by toggling `SetActive` on the vendor
+  `Camera_InCar` and ESCROW-owned `Camera_InCar_Passenger` components — no edit to
+  `BP_ESCROW_CommandVehicle` was needed or made.
+- Driving-input suppression is explicitly deferred (vendor input-binding internals are
+  black-boxed); pressing `N` currently only switches the camera + prints a status line.
+- Re-confirmed in the same PIE session: Tab/console, MAP tab (no feed overlay), `8` → report-deck
+  toast, minimap — all unaffected.
+- One unresolved oddity: the very first `N` press after a fresh PIE start printed "Seat: Driver"
+  instead of the expected "Seat: Passenger/Console" once; every subsequent press alternates
+  correctly. Node graph confirmed correct via direct pin inspection — likely a first-frame/
+  environment timing quirk, not a logic bug. Worth re-checking with real keyboard input.
+- No new Blueprint compile errors. (One transient "Accessed None"/"TestHUDRef" error batch was
+  observed, but traced to a mid-PIE Blueprint compile mistake made earlier in this same pass,
+  fully resolved by stopping PIE before recompiling — see the condition-plan doc for detail. The
+  final, saved state compiles clean and was verified in a subsequent fresh PIE session with zero
+  new errors.)
+
+## RA36B-2 + RA36B-3-lite update note (physical console mirror foundation)
+
+- New additive widget `WBP_ESCROW_PhysicalConsoleMirror` + a runtime-created `UWidgetComponent`
+  (via `AddWidgetComponent` on the possessed `CommandVehicleRef`, no `BP_ESCROW_CommandVehicle`
+  edit) mirror Seat / Console Mirror status / Display Mode / Vehicle Control Role onto a
+  world-space panel attached to `Console_Display`.
+- Verified live in a fresh PIE session via direct state inspection of the live actor/widget
+  instances (see condition-plan doc for the exact values read back): component valid, attached to
+  `Console_Display`, status label "Active on Console Display", and all four text fields showing
+  correct real values ("Seat: Driver", "Display Mode: HUD Primary", "Vehicle Control Role:
+  Driving") — confirming `DisplayMode`/`VehicleControlRole` are genuinely readable, not stubbed.
+- **Could not live-test the `N` seat toggle in this pass**: the available input-simulation tooling
+  (Slate `PressKey`) does not reach the PIE game viewport's input system — pressing `N` via that
+  tool left `bESCROWInPassengerConsoleSeat` unchanged (confirmed by reading the live instance
+  before/after). This is the same class of pre-existing limitation already noted under RA36A-2 for
+  the Main Menu combo boxes. `Escrow_ToggleSeat`'s own internal nodes were not modified this pass
+  (only a new call was appended after its existing, previously-unconnected `then` pin), and the
+  whole Blueprint compiles clean, but the actual keyboard toggle should be re-confirmed by a human
+  tester with real key input.
+- Re-confirmed unaffected in the same PIE session (via clean log, no new runtime errors): Tab/
+  console, MAP tab (no feed overlay), `8` → report-deck toast, minimap — none of that code was
+  touched this pass.
+- No new Blueprint compile or runtime errors in this pass's PIE session (log checked before and
+  after; a handful of resolved development-time DSL syntax errors from earlier in this same pass
+  are visible in the log but predate the verification PIE session and were all fixed before
+  compiling/saving).
+
+## RA36B-REPAIR-1 update note (passenger look + console placement repair)
+
+- Human testing found RA36B-FIX-1 did not actually fix passenger free-look or console placement.
+  Both were replaced structurally this pass — see the condition-plan doc §9 for full detail.
+- Passenger look is now driven by two new `MouseX`/`MouseY` raw axis events on
+  `BP_ESCROW_PlayerController` feeding a new `Escrow_UpdatePassengerLook` function, which directly
+  rotates `Camera_InCar_Passenger` while `bESCROWInPassengerConsoleSeat` is true (pitch clamped to
+  ±60°, reset to center on each seat entry). Driver mode's own look is untouched.
+- The console mirror is no longer runtime-spawned. A `WidgetComponent` named
+  `ConsoleMirrorDisplay` was added directly in `BP_ESCROW_CommandVehicle` as a child of the
+  existing `Console_Display`, with `WBP_ESCROW_PhysicalConsoleMirror` assigned as its widget
+  class. There is exactly one console-mirror surface now, anchored to the intended display.
+- **Verification limitation found this pass**: the already-open level's placed vehicle instance
+  did not pick up the new component's saved properties in this editor session (a known
+  Blueprint-instance-refresh quirk), so the mirror widget did not visibly render in this
+  session's PIE. The saved Blueprint asset was directly confirmed correct. **A human tester should
+  reopen the map or restart the editor before verifying** — this is expected to resolve on a fresh
+  level load.
+- Repeated PIE start/stop cycling in this pass also triggered one unrelated, transient
+  `TRASH_CameraComponent_2` error from the vendor `ABP_ThirdPerson_driving` Animation Blueprint —
+  did not recur in a clean single PIE session; likely an artifact of rapid restarts, not of any
+  change made this pass. Worth a clean-session re-check.
+- Tab/console, MAP tab, `8` report-deck toast, and minimap were not touched this pass; no new
+  Blueprint compile errors. Live confirmation of the `N` toggle, look responsiveness, and the
+  mirror's visible appearance all still require a human PIE pass (see limitations above).
+
+## RA36B-REGRESSION-FIX-DRIVER-GAZE update note (critical driver-gaze rollback)
+
+- **RA36B-REPAIR-1's passenger raw-mouse-look implementation caused a driver-gaze regression** in
+  human testing — driver-seat mouse/look stopped working entirely after that pass.
+- **RA36B-REGRESSION-FIX removed the risky input path**: the new `MouseX`/`MouseY` input events on
+  `BP_ESCROW_PlayerController` were created with `bConsumeInput = true` (the UE default), which
+  let the Controller-level binding block the mouse axis from ever reaching the vendor pawn's own
+  look handling, since the Controller receives input before its possessed Pawn. Both events and
+  their directly-wired helper nodes were deleted; nothing else was touched.
+- **Passenger free-look is deferred** until a genuinely input-safe mechanism is designed.
+  `Escrow_UpdatePassengerLook` and the `PassengerLookYaw`/`PassengerLookPitch` variables remain as
+  inert, harmless dead code (unreferenced by any input path).
+- **Driver-seat behavior is the baseline and must not be put at risk again** — any future
+  input-related change must confirm it does not set `bConsumeInput = true` (or otherwise
+  intercept input) on a PlayerController-level binding.
+- `N` seat-toggle wiring and the console-mirror refresh call remain structurally intact
+  (unaffected by this rollback). Compile clean, PIE log clean, no new errors. **Actual mouse input
+  could not be programmatically injected in this environment** — a human must confirm driver gaze
+  is restored with real mouse input before this is considered closed.
+
+## RA36B-PASSENGER-SEAT-FIX update note (passenger look repaired without repeating the regression)
+
+- **Passenger seat now supports look input.** Reintroduced `MouseX`/`MouseY` bindings on
+  `BP_ESCROW_PlayerController`, this time with `bConsumeInput = false` explicitly set on both —
+  the exact flag that caused the prior driver-gaze regression. With it false, both the vendor
+  pawn's own driver-look handling and the new passenger-look logic receive the same input
+  independently; nothing is consumed/blocked.
+- **Physical console display now uses a clean, twist-free orientation** aligned to
+  `Console_Display` (`Pitch 70, Yaw 0, Roll 0` — faces straight back toward the passenger with a
+  20° upward tilt). `Console_Display` remains the sole physical display anchor; `ConsoleMirrorDisplay`
+  (added in RA36B-REPAIR-1) is unchanged and still inherits this orientation as its child.
+  Screenshots still show some keystoning, most likely a proximity/perspective artifact (the panel
+  sits very close to the passenger camera) rather than a rotation defect — flagged for a possible
+  follow-up on distance/placement, not further rotation changes.
+- **Driver behavior remains the baseline and must be preserved in future passes.** Any future
+  PlayerController-level input binding must confirm `bConsumeInput` stays `false` unless there is
+  a specific, deliberate reason to consume that input.
+- Hit and resolved a transient external file-lock issue (OneDrive-related, Windows Error Code 32)
+  while saving; both assets saved successfully once it cleared, confirmed via fresh file
+  timestamps.
+- PIE-verified: clean compile, clean log in a session started after the successful disk save,
+  baseline driver seat and corrected console rotation both confirmed live. Real mouse-driven look
+  (both passenger and driver, including the round-trip via `N`) still requires human confirmation
+  — this environment cannot inject mouse input.
+
+## RA36C-1 update note (passenger look moved to Tick, console-placement instance-override found)
+
+- **Passenger look replaced again, structurally**: the raw `MouseX`/`MouseY` Input Axis Key events
+  on `BP_ESCROW_PlayerController` (from RA36B-PASSENGER-SEAT-FIX) were deleted outright rather than
+  further tweaked, per this pass's explicit instruction not to keep layering the same approach.
+  `EventTick` now branches on `bESCROWInPassengerConsoleSeat`; when true it calls the engine's
+  `GetInputMouseDelta()` (a direct per-frame poll of `PlayerInput`, not an `InputComponent`
+  binding) and feeds `DeltaX`/`-DeltaY` into the existing `Escrow_UpdatePassengerLook`. When false,
+  the branch does nothing — no code runs, no variables touched. This sidesteps the whole class of
+  input-stack/consumption uncertainty that raw Axis Key events carry, whatever the true cause of
+  their unreliability was. Driver look is structurally untouched (no edit near `Camera_InCar` or
+  any vendor input binding).
+- **Root cause of the console "giant gray board" found and confirmed empirically, not guessed**:
+  the *placed* `BP_ESCROW_CommandVehicle` actor in `MAP_ESCROW_DESERT_INTEGRATION_TEST.umap` carries
+  its own per-instance property overrides on `Console_Display` (full transform, rotation
+  `Pitch 70 / Yaw 180 / Roll 180` — not the `Yaw 0/Roll 0` RA36B-PASSENGER-SEAT-FIX believed it had
+  set) and on `ConsoleMirrorDisplay` (`DrawSize` overridden to **500×500**, roughly 5-6× the
+  Blueprint default). A passenger-camera screenshot taken from this pass's live PIE session shows
+  exactly the reported symptom: a blank, badly-angled, frame-filling panel. This explains why every
+  prior RA36B console-placement pass "fixed" the Blueprint asset but the live map never visibly
+  changed — none of those passes had read the placed instance's actual override values, only the
+  Blueprint CDO or a fresh/unplaced instance.
+- **Fix applied this pass, scoped to the allowed asset only**: `Console_Display` on
+  `BP_ESCROW_CommandVehicle`'s class defaults moved further from the passenger camera and lowered
+  (location `X 72→100, Z 166.7→132`), shrunk (`Scale 0.40×0.60 → 0.35×0.45`), and re-tilted to a
+  shallow `Pitch 25° (Yaw 0, Roll 0)` — a dash-mounted-screen angle instead of the near-vertical
+  70°. `ConsoleMirrorDisplay`'s `DrawSize` was brought down to `42×54` to match the resized mesh.
+  **This fix cannot visibly manifest in the current map** until the per-instance overrides above
+  are cleared, because maps/level-actor edits are out of scope for this pass (hard constraint).
+  Human/next-pass action needed: select the placed vehicle actor, and in its Details panel
+  right-click → "Reset to Default" the `Console_Display` transform and `ConsoleMirrorDisplay`
+  `DrawSize` overrides so the actor inherits the corrected Blueprint defaults above.
+- `Camera_InCar_Passenger` has **no** instance override on this placed actor (confirmed identical
+  to the Blueprint CDO), so the Tick-based passenger-look fix is not blocked by the same issue.
+- Automated `N`-key simulation via the Slate `PressKey` tool still does not reach the PIE game
+  viewport in this environment (no "Seat:" print appeared in the log after the call) — consistent
+  with the same limitation logged under RA36A-2/RA36B-2. Seat-toggle wiring itself was inspected
+  node-by-node and confirmed structurally correct (`N` Pressed → `Escrow_ToggleSeat` →
+  `Escrow_RefreshPhysicalConsoleMirror`), but a human must confirm the live keypress.
+- Both Blueprints compile clean and saved individually (no Save All); `WBP_ESCROW_ExperimentSetup`
+  and both HUD widgets were not opened or touched. Real mouse feel for passenger look still
+  requires human confirmation with physical input — this environment cannot inject mouse deltas.
+
+## RA36C-2 update note (runtime console-display canonicalization; giant-board diagnosis corrected)
+
+- **New function `Escrow_ApplyConsoleDisplayRuntimeDefaults` added to `BP_ESCROW_CommandVehicle`**,
+  called once from the end of the existing `EventBeginPlay` chain (spliced in as a single new call
+  node after the existing `PrintString`, exactly the "small node insert" pattern used since
+  RA36A-2 — nothing else in `BeginPlay` was touched or reordered). At runtime it forces
+  `Console_Display`'s relative Location/Rotation/Scale and `ConsoleMirrorDisplay`'s `DrawSize` to
+  RA36C-1's intended values, overriding whatever per-instance values the placed map actor carries.
+  This is deliberate: the map is not saved or edited, so the placed actor's saved data still has
+  its bad overrides, but the live PIE instance now self-corrects every time it begins play.
+  Verified directly on the live PIE actor after `BeginPlay`: `Console_Display` reads back
+  Location `(100, 60.72, 132)`, Rotation `(Pitch 25, Yaw ≈0, Roll ≈0)`, Scale `(0.35, 0.45, 1)`;
+  `ConsoleMirrorDisplay.DrawSize` reads back `(42, 54)` — down from the map's saved `500×500`.
+  The map's *saved* per-instance values are untouched and still show the old broken numbers when
+  queried outside PIE; only the live runtime instance is corrected, exactly as intended.
+- **Important correction to the RA36C-1 diagnosis**: with the runtime fix active, the
+  passenger-view "giant blank board" was re-screenshotted and **still present, pixel-for-pixel
+  identical** to the pre-fix screenshot. To isolate the cause, `Console_Display` and then
+  `ConsoleMirrorDisplay` were each temporarily hidden (`bHiddenInGame`) on the live PIE instance
+  only, one at a time, and the board persisted through both. A screen-space raycast into the board
+  (`ScreenCoordsToWorld`) hit a surface only ~11cm from the passenger camera — consistent with the
+  passenger camera clipping into nearby vendor interior geometry (most likely a sun visor or
+  headliner, given the passenger camera sits ~60 units higher and on the opposite side of the cab
+  from the driver camera), not with either display component. **The giant board is not
+  `Console_Display` or `ConsoleMirrorDisplay` at all.** Both components' visibility was restored
+  before ending the PIE session; nothing about this diagnostic was saved. This pass still
+  implements exactly what RA36C-1/RA36C-2 specified (the display components now canonicalize
+  correctly at runtime, confirmed by direct property read-back), but that specific visual
+  complaint needs a fresh, separate investigation into passenger camera clearance versus vendor
+  interior trim — not further Console_Display transform changes.
+- Passenger-look path (`EventTick` → `GetInputMouseDelta` → `Escrow_UpdatePassengerLook`, gated on
+  `bESCROWInPassengerConsoleSeat`) was not modified this pass; re-inspected and confirmed unchanged
+  and structurally intact. No raw `MouseX`/`MouseY` Input Axis Key events were reintroduced.
+- Driver-relevant `BeginPlay` lines (`Camera_InCar` activation, `Rear_Camera`/`VRCamera`
+  deactivation, `CanThrottle`) are byte-for-byte unchanged — confirmed via before/after DSL diff.
+- A handful of `TRASH_CameraComponent_N` / `ABP_ThirdPerson_driving` runtime errors appeared during
+  this session's PIE runs — this is the same pre-existing repeated-PIE-restart artifact already
+  documented under RA36B-REPAIR-1, not a new regression; no vendor asset was touched this pass.
+  `LogUIActionRouter`'s `CommonGameViewportClient` error is the same pre-existing, already-documented
+  limitation from RA36A-2. No new Blueprint compile errors and no errors traced to
+  `Escrow_ApplyConsoleDisplayRuntimeDefaults` or the passenger-look path.
+- Only `BP_ESCROW_CommandVehicle.uasset` was saved this pass (not `BP_ESCROW_PlayerController`,
+  since it was not touched). The map was loaded for PIE testing only — never edited or saved.
+
+## RA36C-3 update note (passenger camera clearance fixed; giant board explained)
+
+- **The giant gray/white board was camera clipping, not the console display** — confirmed this
+  pass by moving `Camera_InCar_Passenger` and re-testing; it is very likely the passenger-side door
+  window viewed at extreme close range (a few cm), not a bug in `Console_Display`/
+  `ConsoleMirrorDisplay` (both already ruled out structurally in RA36C-2). `Console_Display`
+  canonicalization is untouched and still verified correct at runtime.
+- **A second stale per-instance override was found and fixed the same way**: the placed vehicle
+  actor's `Camera_InCar_Passenger` also had a location frozen from an old value (`Z 185.8`) that a
+  Blueprint class-default edit alone could not override — the identical class of problem RA36C-2
+  found for `Console_Display`. New function `Escrow_ApplyPassengerCameraRuntimeDefaults` added to
+  `BP_ESCROW_CommandVehicle`, called from `BeginPlay` right after
+  `Escrow_ApplyConsoleDisplayRuntimeDefaults`, forcing `Camera_InCar_Passenger`'s relative
+  Location/Rotation at runtime the same way. The map itself was never touched or saved.
+- **A related discovery**: the vendor driver camera (`Camera_InCar`) *also* carries a per-instance
+  override on this placed actor — its live position (`X 26.98, Y -61.58, Z 185.19`) differs from
+  its own Blueprint CDO default (`X 9.28, Y -35.69, Z 125.80`). This is presumably an intentional
+  hand-tuned adjustment from whoever placed this actor, since the driver seat has been confirmed
+  working throughout every pass. It was read-only reference data this pass, not edited — `Camera_InCar`
+  is a vendor component and was never touched.
+- **Final passenger camera position, found by iterating and screenshotting from the actual live
+  camera position each time** (not guessed once): `(X 15.0, Y 15.0, Z 170.0)`, rotation unchanged
+  `(0, 0, 0)`. Earlier attempts at mirroring the driver's position one-to-one (`Y ≈ ±62`) still put
+  the camera right against the passenger-side window at any plausible seat height; moving inward
+  toward the cab's centerline resolved it. The resulting view shows dashboard, gauges, console
+  screen, cup holders, and gear shifter clearly — a real interior view, not a clipped board. A
+  strip of bright window remains at the right edge of frame, which is normal/expected for a
+  seated-passenger view near a side window, not a clipping artifact.
+- Passenger-look path (`EventTick` → `GetInputMouseDelta` → `Escrow_UpdatePassengerLook`) and the
+  `N` seat-toggle wiring were re-inspected and confirmed unchanged and structurally intact; nothing
+  in `BP_ESCROW_PlayerController` was touched or saved this pass.
+- No new Blueprint compile errors. The same pre-existing `TRASH_CameraComponent`/
+  `ABP_ThirdPerson_driving` and `CommonGameViewportClient` log noise from repeated PIE
+  restarts in this long session reappeared, already documented under RA36B-REPAIR-1/RA36A-2 — not
+  a new regression, and no vendor asset was edited.
+- **Still requires human confirmation**: real mouse feel for passenger look, the actual `N` keypress
+  round-trip, and a human eyeballing the final passenger camera framing in a real headset/monitor
+  view rather than an offline screenshot, since "acceptable" framing is inherently subjective.
+
+## RA36D-1 update note (diagnostic instrumentation only, no fix)
+
+- Human testing after RA36C-3 found passenger gaze still doesn't work, despite the passenger
+  camera no longer clipping. Full structural re-inspection of the `N` → `Escrow_ToggleSeat` →
+  camera-activation path and the `EventTick` → `GetInputMouseDelta` → `Escrow_UpdatePassengerLook`
+  path found nothing obviously broken — both are wired correctly, verified at the actual exec-pin
+  level, not just from the DSL text dump (which cosmetically reorders pure-node binds in a way
+  that first looked like a bug but wasn't). Confirmed `Escrow_ToggleSeat` uses `SetActive` only —
+  no `SetViewTargetWithBlend` anywhere — meaning the driver/passenger camera swap relies entirely
+  on `AActor::bFindCameraComponentWhenViewTarget`'s implicit first-active-camera-component
+  discovery. This was flagged as the leading suspect.
+- Added temporary on-screen/log diagnostic (`PrintString`, key `RA36D_Diag`, refreshes in place)
+  to `EventTick`'s passenger branch, showing mouse delta, passenger look yaw/pitch, and
+  `Camera_InCar_Passenger`'s live relative rotation, so a human could observe live values while
+  pressing `N` and moving the mouse. No camera placement or `Console_Display` changes made.
+
+## RA36D-2 update note (explicit view-target camera proxies replace implicit SetActive-only switching)
+
+- Human testing confirmed the RA36D-1 diagnostic prints appear correctly in passenger mode
+  (`EventTick`'s passenger branch is definitely executing), but the rendered view still didn't
+  respond to mouse movement — confirming the RA36D-1 suspicion that `SetActive`-only camera
+  switching is architecturally insufficient.
+- **`Escrow_ToggleSeat` now explicitly controls the render view target** via
+  `SetViewTargetWithBlend`, instead of relying on Unreal's implicit first-active-camera-component
+  discovery. Two lightweight `CameraActor` proxies (`DriverCameraProxy`, `PassengerCameraProxy`)
+  are lazily spawned and owned by `BP_ESCROW_PlayerController` (new functions
+  `Escrow_EnsureDriverCameraProxy` / `Escrow_EnsurePassengerCameraProxy`), aligned to the
+  corresponding vehicle camera's *world* transform (`Transformation|GetWorldTransform`, not the
+  relative transform used for the diagnostic), and set as the view target with `BlendTime 0.0`
+  (instant, matching the existing immediate seat-swap feel). `SetActive` calls are kept alongside
+  (harmless) but are no longer the only mechanism.
+- **New function `Escrow_SyncPassengerCameraProxy`**, called every tick from `EventTick`'s
+  passenger branch right after `Escrow_UpdatePassengerLook`, keeps `PassengerCameraProxy`'s world
+  transform following `Camera_InCar_Passenger` each frame — so as the vehicle moves and the mouse
+  rotates the camera component, the actual rendered view target tracks it in real time.
+- No `Console_Display` or `Camera_InCar_Passenger` placement changes this pass, per instruction.
+  `Camera_InCar` (vendor) was read-only (`Class|BPBaseCar|GetCamerainCar`, for the driver proxy's
+  world transform) — never written to.
+- Compiles clean; the transient "Spawn Transform pin invalid" errors seen mid-session were from
+  an intermediate, incomplete write attempt and did not affect the final saved state (re-verified
+  with a clean compile immediately before saving). No Accessed-None errors observed in PIE.
+- **Tooling could not trigger `N` in PIE** (same pre-existing Slate `PressKey`-doesn't-reach-the-
+  game-viewport limitation documented since RA36A-2) and a direct property write to
+  `bESCROWInPassengerConsoleSeat` via the reflection tool was refused — so the new view-target
+  switch could only be verified structurally (exec-graph pin wiring, self-reference targets,
+  clean compile), not through an actual live toggle. Human testing is required to confirm the
+  passenger view now actually moves.
+
+## RA36E-0 update note (emergency stabilization — RA36D-2 proxy/view-target system rolled back)
+
+- Human testing found the RA36D-2 explicit view-target proxy system made things worse, not better:
+  pressing `N` no longer cleanly toggled Driver ↔ Passenger, the rendered view jumped between
+  strange interior positions, and driver mouse control could be lost or compromised after toggling.
+  This pass treated that report as a stop-build signal and rolled the proxy/view-target work back
+  rather than patching it further.
+- **Root cause identified**: the RA36D-2 proxy system was asymmetric. `Escrow_SyncPassengerCameraProxy`
+  re-synced `PassengerCameraProxy`'s world transform every tick, but there was never an equivalent
+  per-tick sync for `DriverCameraProxy` — so after a toggle back to driver, the render view target
+  was left pointing at a stale, one-time snapshot of the driver camera's transform instead of
+  tracking it live. This fully explains the reported symptoms.
+- **Fix, scoped to `BP_ESCROW_PlayerController` only**: `Escrow_ToggleSeat` now always forces
+  `bESCROWInPassengerConsoleSeat` to `false` and prints "Passenger mode disabled pending rebuild" —
+  passenger seat is intentionally disabled, not fixed. `EventTick` was simplified back to its
+  pre-RA36D-2 form (the passenger-look call is now permanently dead code since the flag can never
+  become true, left in place rather than deleted). The three RA36D-2 proxy functions
+  (`Escrow_EnsureDriverCameraProxy`, `Escrow_EnsurePassengerCameraProxy`,
+  `Escrow_SyncPassengerCameraProxy`) and the two proxy variables (`DriverCameraProxy`,
+  `PassengerCameraProxy`) were deleted. `BP_ESCROW_CommandVehicle`'s runtime-defaults BeginPlay
+  hooks (`Escrow_ApplyConsoleDisplayRuntimeDefaults`, `Escrow_ApplyPassengerCameraRuntimeDefaults`)
+  were inspected, confirmed unrelated to the breakage, and left untouched. No map was touched or
+  saved. HUD/report/MAP widgets were not touched.
+- Compiles clean; PIE verification after save showed the driver seat rendering normally at
+  `BeginPlay` (steering wheel, dashboard, gauges all correct) with `CommandVehicle CanThrottle
+  enabled at BeginPlay` logging as expected, and no new compile or runtime errors. Live `N`/`Tab`/
+  `8` keypress round-trips still cannot be triggered by tooling (same long-documented Slate
+  `PressKey`-doesn't-reach-the-game-viewport limitation) and require human confirmation.
+- **Recommended next passenger-seat architecture**: do not resume building on
+  `SetViewTargetWithBlend` + spawned `CameraActor` proxies layered onto the existing controller.
+  Build a dedicated passenger pawn/controller-possession swap (`Possess`/`UnPossess` a small
+  passenger-seat pawn with its own camera component), or a single reusable `CameraActor` per seat
+  that is parented and continuously synced by a proper tick-driven component on both the driver and
+  passenger paths symmetrically — not just one side. Whichever approach is chosen, verify the
+  symmetry explicitly (both directions of the toggle re-sync every tick) before considering it done.
+
+## RA38A update note (passenger seat rebuilt as a seat-anchor retarget, not a proxy camera)
+
+- **Passenger seat is now a seat-state / shared-view-rig retarget, not a proxy camera or
+  view-target architecture.** There is no `CameraActor`, no `SetViewTargetWithBlend`, and no
+  reliance on Unreal's implicit "first active camera component" discovery being switched between
+  multiple cameras. The same vendor `Camera_InCar` component that already renders the working
+  driver view is reused for both seats — only its `RelativeLocation` moves, between two new
+  ESCROW-owned anchor markers (`ESCROW_DriverSeatViewAnchor`, `ESCROW_PassengerSeatViewAnchor`,
+  both plain `SceneComponent`s parented under the vendor `Cameras` component on
+  `BP_ESCROW_CommandVehicle`). `Camera_InCar`'s rotation/look mechanism is never touched, so
+  whatever already made driver mouse-look work continues to work identically in both seats.
+- The driver anchor is not a hardcoded value — `EventBeginPlay` captures `Camera_InCar`'s actual
+  starting `RelativeLocation` into `ESCROW_DriverSeatViewAnchor` at runtime, so it always matches
+  the live per-instance value on the placed map actor (which differs from the Blueprint's class
+  default), without ever needing to read or save the map. The passenger anchor defaults to
+  `(15, 15, 170)`, the same position validated by hand in the RA36C-3 pass.
+- **`N` still toggles Driver ↔ Passenger** via `Escrow_ToggleSeat` in `BP_ESCROW_PlayerController`.
+  It flips `bESCROWInPassengerConsoleSeat`, calls the command vehicle's new
+  `Escrow_SetSeatView(bPassenger)` to move `Camera_InCar` to the correct anchor, and calls the new
+  `Escrow_SetDrivingEnabled(bEnabled)` to gate driving. Possession never changes.
+- **Passenger disables driving input but preserves gaze and HUD controls.** Driving is gated
+  through the vendor-exposed `CanThrottle` property (the same property already used at `BeginPlay`
+  to enable throttle) rather than by touching vendor input graphs. Tab/HUD, MAP/minimap, and the
+  key-8 report deck are handled entirely independently of seat state and are unaffected either way.
+  `EventTick` no longer runs any passenger-specific per-frame logic — the old manual
+  `GetInputMouseDelta` → `Escrow_UpdatePassengerLook` path is now fully unreachable (disconnected
+  from `EventTick`), since gaze no longer needs a separate passenger-only update path.
+- **Exit is expected to work identically from both seats**, because exit is not ESCROW-owned logic
+  at all — structural inspection this pass found no ESCROW `E`-to-exit binding anywhere in
+  `BP_ESCROW_PlayerController` or `BP_ESCROW_CommandVehicle`; the only `E` binding ESCROW owns maps
+  to `Escrow_CycleNext` (follower cycling). Vehicle exit, if implemented, lives entirely inside the
+  vendor vehicle pawn class via the legacy `Interact` action mapping (`E` / gamepad face-button-left,
+  see `Config/DefaultInput.ini`), which this pass never touched. Since seat switching never changes
+  possession or consumes additional input, exit behavior should be exactly whatever it already was
+  before this pass — this still requires human confirmation, the same as before.
+- Console Display condition and physical console rendering remain future work, per instruction —
+  not implemented this pass.
+- Structural verification only: Blueprint graphs read back clean, both Blueprints compile with no
+  errors, and a fresh PIE session confirms the driver view renders correctly at `BeginPlay` with
+  `CanThrottle` true and both seat anchors holding the correct live values. Live `N` keypress
+  toggling still cannot be triggered by tooling (same long-documented Slate `PressKey`-doesn't-
+  reach-the-game-viewport limitation) and requires human testing to confirm the passenger view
+  actually appears and gaze/driving-gating behave as designed.
