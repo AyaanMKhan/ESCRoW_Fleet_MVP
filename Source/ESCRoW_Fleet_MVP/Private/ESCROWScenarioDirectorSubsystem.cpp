@@ -3,7 +3,9 @@
 #include "ESCROWScenarioDirectorSubsystem.h"
 #include "ESCROWFleetSubsystem.h"
 #include "ESCROWEventLogSubsystem.h"
+#include "ESCROWSessionSubsystem.h"
 #include "Engine/World.h"
+#include "Engine/GameInstance.h"
 #include "TimerManager.h"
 
 namespace
@@ -17,6 +19,84 @@ void UESCROWScenarioDirectorSubsystem::Initialize(FSubsystemCollectionBase& Coll
 {
 	Super::Initialize(Collection);
 	InitializeScenario();
+	InitializeRunDataForCurrentLevel();
+}
+
+void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()
+{
+	const UWorld* World = GetWorld();
+	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	if (!GameInstance)
+	{
+		return;
+	}
+
+	UESCROWEventLogSubsystem* EventLog = GameInstance->GetSubsystem<UESCROWEventLogSubsystem>();
+	UESCROWSessionSubsystem* Session = GameInstance->GetSubsystem<UESCROWSessionSubsystem>();
+	if (!EventLog || !Session)
+	{
+		return;
+	}
+
+	FESCROWRunConfig RunConfig;
+	bool bFoundPending = false;
+	Session->PromotePendingRunConfigToCurrent(RunConfig, bFoundPending);
+
+	bool bUsedFallback = false;
+	if (!bFoundPending)
+	{
+		// PIE launched directly into the level, or the menu path was skipped:
+		// build a safe placeholder dev run rather than leaving the run unstarted.
+		bUsedFallback = true;
+
+		RunConfig = FESCROWRunConfig();
+		RunConfig.ParticipantID = Session->GetParticipantID().IsEmpty() ? TEXT("PILOT") : Session->GetParticipantID();
+		RunConfig.ResearcherID = Session->GetResearcherID().IsEmpty() ? TEXT("UNSET") : Session->GetResearcherID();
+		RunConfig.SessionID = Session->GetSessionID();
+		RunConfig.ScenarioID = TEXT("DEV_NO_PENDING_CONFIG");
+		RunConfig.ScenarioVersion = TEXT("dev");
+		RunConfig.ConditionID = Session->GetConditionSummary();
+		RunConfig.SupportMode = TEXT("ManualBaseline");
+		RunConfig.DisplayMode = Session->GetDisplayModeName();
+		RunConfig.VehicleControlRole = Session->GetVehicleControlRoleName();
+		RunConfig.WorkloadLevel = TEXT("Unspecified");
+		RunConfig.ScenarioVariant = TEXT("FlatPilot");
+		RunConfig.EventSalience = TEXT("Unspecified");
+		RunConfig.UncertaintyLevel = TEXT("Unspecified");
+		RunConfig.MapName = World ? World->GetMapName() : TEXT("UNKNOWN");
+		RunConfig.CreatedAt = FDateTime::Now();
+		RunConfig.Notes = TEXT("Auto-generated fallback: no pending run config found at level load.");
+		RunConfig.RunID = Session->GenerateRunID(RunConfig.ScenarioID, RunConfig.ConditionID, RunConfig.ParticipantID);
+
+		Session->SetPendingRunConfig(RunConfig);
+		Session->PromotePendingRunConfigToCurrent(RunConfig, bFoundPending);
+	}
+
+	if (RunConfig.RunID.IsEmpty())
+	{
+		RunConfig.RunID = Session->GenerateRunID(RunConfig.ScenarioID, RunConfig.ConditionID, RunConfig.ParticipantID);
+	}
+	if (RunConfig.MapName.IsEmpty() && World)
+	{
+		RunConfig.MapName = World->GetMapName();
+	}
+	if (RunConfig.CreatedAt.GetTicks() == 0)
+	{
+		RunConfig.CreatedAt = FDateTime::Now();
+	}
+
+	EventLog->BeginRunFromConfig(RunConfig);
+
+	EventLog->RecordScenarioEventSimple(
+		CurrentScenarioStep,
+		TEXT("RunInitialized"),
+		TEXT("Level loaded and run initialized"),
+		FString(),
+		0,
+		TEXT("Unspecified"),
+		bUsedFallback ? TEXT("{\"fallback\":true}") : TEXT("{\"fallback\":false}"));
+
+	EventLog->StartHeartbeat();
 }
 
 void UESCROWScenarioDirectorSubsystem::Deinitialize()

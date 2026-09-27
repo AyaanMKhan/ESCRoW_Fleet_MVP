@@ -275,6 +275,73 @@ void UESCROWSessionSubsystem::SetComplexityConditionByIndex(int32 Index)
 	ComplexityCondition = static_cast<EESCROWComplexityCondition>(ClampedIndex);
 }
 
+void UESCROWSessionSubsystem::SetPendingRunConfig(const FESCROWRunConfig& Config)
+{
+	PendingRunConfig = Config;
+	bHasPendingRunConfig = true;
+}
+
+void UESCROWSessionSubsystem::GetPendingRunConfig(FESCROWRunConfig& OutConfig, bool& bFound) const
+{
+	OutConfig = PendingRunConfig;
+	bFound = bHasPendingRunConfig;
+}
+
+void UESCROWSessionSubsystem::PromotePendingRunConfigToCurrent(FESCROWRunConfig& OutConfig, bool& bFound)
+{
+	if (bHasPendingRunConfig)
+	{
+		CurrentRunConfig = PendingRunConfig;
+		bHasCurrentRunConfig = true;
+		bHasPendingRunConfig = false;
+	}
+
+	OutConfig = CurrentRunConfig;
+	bFound = bHasCurrentRunConfig;
+}
+
+void UESCROWSessionSubsystem::GetCurrentRunConfig(FESCROWRunConfig& OutConfig, bool& bFound) const
+{
+	OutConfig = CurrentRunConfig;
+	bFound = bHasCurrentRunConfig;
+}
+
+void UESCROWSessionSubsystem::ClearPendingRunConfig()
+{
+	PendingRunConfig = FESCROWRunConfig();
+	bHasPendingRunConfig = false;
+}
+
+void UESCROWSessionSubsystem::ClearCurrentRunConfig()
+{
+	CurrentRunConfig = FESCROWRunConfig();
+	bHasCurrentRunConfig = false;
+}
+
+FString UESCROWSessionSubsystem::GenerateRunID(const FString& InScenarioID, const FString& InConditionID, const FString& InParticipantID)
+{
+	const FString Timestamp = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
+	const FString SafeParticipant = SanitizeForFilesystem(InParticipantID.IsEmpty() ? TEXT("PILOT") : InParticipantID);
+	const FString SafeScenario = SanitizeForFilesystem(InScenarioID.IsEmpty() ? TEXT("UNSET") : InScenarioID);
+	const FString SafeCondition = SanitizeForFilesystem(InConditionID.IsEmpty() ? TEXT("UNSET") : InConditionID);
+
+	return FString::Printf(TEXT("%s_%s_%s_%s"), *Timestamp, *SafeParticipant, *SafeScenario, *SafeCondition);
+}
+
+FString UESCROWSessionSubsystem::SanitizeForFilesystem(const FString& In)
+{
+	FString Out = In;
+	Out.ReplaceInline(TEXT(" "), TEXT("_"));
+
+	static const TCHAR* Illegal = TEXT("\\/:*?\"<>|.,");
+	for (const TCHAR* Ch = Illegal; *Ch; ++Ch)
+	{
+		Out.ReplaceCharInline(*Ch, TEXT('_'));
+	}
+
+	return Out;
+}
+
 void UESCROWSessionSubsystem::ApplyMissionConditionFlags()
 {
 	switch (SelectedMissionCondition)

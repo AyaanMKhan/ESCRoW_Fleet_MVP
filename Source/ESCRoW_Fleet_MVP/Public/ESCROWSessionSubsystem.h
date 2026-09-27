@@ -87,6 +87,20 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
 	bool bSessionActive = false;
 
+	// RA41A: run config written by the experiment setup menu, promoted to
+	// CurrentRunConfig on level load (see UESCROWScenarioDirectorSubsystem::Initialize).
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|RunConfig")
+	FESCROWRunConfig PendingRunConfig;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|RunConfig")
+	FESCROWRunConfig CurrentRunConfig;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|RunConfig")
+	bool bHasPendingRunConfig = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|RunConfig")
+	bool bHasCurrentRunConfig = false;
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
 	void ResetSessionState();
 
@@ -208,6 +222,35 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
 	float GetSessionStartTimeSeconds() const;
 
+	// --- RA41A run config API ---
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|RunConfig")
+	void SetPendingRunConfig(const FESCROWRunConfig& Config);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|RunConfig")
+	void GetPendingRunConfig(FESCROWRunConfig& OutConfig, bool& bFound) const;
+
+	// Copies PendingRunConfig into CurrentRunConfig (if one is pending) and
+	// clears the pending flag. Safe to call with no pending config: OutConfig
+	// is left as the last CurrentRunConfig (possibly default) and bFound is false.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|RunConfig")
+	void PromotePendingRunConfigToCurrent(FESCROWRunConfig& OutConfig, bool& bFound);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|RunConfig")
+	void GetCurrentRunConfig(FESCROWRunConfig& OutConfig, bool& bFound) const;
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|RunConfig")
+	void ClearPendingRunConfig();
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|RunConfig")
+	void ClearCurrentRunConfig();
+
+	// Filesystem-safe run ID: YYYYMMDD_HHMMSS_<ParticipantID>_<ScenarioID>_<ConditionID>.
+	// Sanitizes each component (spaces/slashes/etc. become underscores).
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|RunConfig")
+	FString GenerateRunID(const FString& InScenarioID, const FString& InConditionID, const FString& InParticipantID);
+
 private:
 	void ApplyMissionConditionFlags();
+	static FString SanitizeForFilesystem(const FString& In);
 };

@@ -31,6 +31,44 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|EventLog")
 	FString CurrentLogFilePath;
 
+	// --- RA41A run-folder / data-manager state ---
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	FString CurrentRunID;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	FString CurrentRunRootDirectory;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	FString CurrentRunFolder;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	bool bRunActive = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	int32 ScenarioEventCount = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	int32 ParticipantActionCount = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	int32 UIExposureCount = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	int32 HeartbeatCount = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	int32 StateTransitionCount = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	int32 ReportRecordCount = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	float HeartbeatIntervalSeconds = 1.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	bool bHeartbeatEnabled = false;
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|EventLog")
 	void ResetLog();
 
@@ -94,9 +132,118 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|EventLog")
 	FString GetLogSummary() const;
 
+	// --- RA41A data-manager run lifecycle ---
+
+	// Ends any existing run, then starts a new one rooted at
+	// Documents/ESCRoW_Data/<Config.RunID>/, creates the folder, and writes the
+	// initial skeleton files (manifest, CSV headers, zeroed summary).
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool BeginRunFromConfig(const FESCROWRunConfig& Config);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	void EndRun(const FString& EndReason);
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|DataManager")
+	FString GetCurrentRunFolder() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|DataManager")
+	bool GetRunActive() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|DataManager")
+	void GetRunRecordCounts(int32& OutScenarioEvents, int32& OutParticipantActions, int32& OutUIExposures, int32& OutHeartbeats, int32& OutStateTransitions, int32& OutReportRecords) const;
+
+	// Creates CurrentRunFolder (and root) on disk if it does not already exist.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool EnsureRunFolder();
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool WriteSessionManifest(const FESCROWRunConfig& Config);
+
+	// Creates all 10 skeleton output files (CSV headers / empty JSONL / initial
+	// export_status.txt and run_summary.json). Called once from BeginRunFromConfig.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool InitializeOutputFiles();
+
+	// Re-writes run_summary.json and export_status.txt with current counts.
+	// Does not re-truncate the per-record CSV/JSONL files (those are appended to).
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool FlushAllOutputs();
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	FString ExportRunSummary();
+
+	// --- RA41A structured logging API ---
+	// Each Record* function no-ops (returns false) if bRunActive is false,
+	// after printing a log warning. Otherwise it stamps Timestamp/WorldSeconds/
+	// RunID/RecordID if unset, increments the matching count, appends one row
+	// to its dedicated file, and mirrors a raw JSONL line to event_log_raw.jsonl.
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordScenarioEvent(const FESCROWScenarioEventRecord& Record);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordScenarioEventSimple(const FString& Phase, const FString& EventType, const FString& EventLabel, const FString& TaskingID, int32 AffectedFollowerID, const FString& PlanValidity, const FString& PayloadJSON);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordParticipantAction(const FESCROWParticipantActionRecord& Record);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordParticipantActionSimple(const FString& ActionType, const FString& Source, const FString& ActivePage, int32 SelectedFollowerID, int32 TargetFollowerID, const FString& TaskingID, const FString& EventID, const FString& PayloadJSON);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordUIExposure(const FESCROWUIExposureRecord& Record);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordUIExposureSimple(const FString& PageName, const FString& WidgetName, int32 SelectedFollowerID, const FString& VisibleFields, const FString& RelatedEventID, bool bDiagnosticEvidenceAvailable, const FString& PayloadJSON);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordHeartbeat(const FESCROWHeartbeatRecord& Record);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordStateTransition(const FESCROWStateTransitionRecord& Record);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordStateTransitionSimple(const FString& EntityID, const FString& EntityType, const FString& StateName, const FString& OldValue, const FString& NewValue, const FString& Source, const FString& RelatedEventID);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordReportField(const FESCROWReportRecord& Record);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordReportFieldSimple(const FString& ReportID, const FString& ReportType, const FString& FieldName, const FString& FieldValue, const FString& GroundTruthValue, int32 Score, const FString& PayloadJSON);
+
+	// Appends one arbitrary raw JSONL line (caller-built) to event_log_raw.jsonl
+	// only, with no typed record and no per-type count increment.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordRawEvent(const FString& EventType, const FString& PayloadJSON);
+
+	// --- RA41A heartbeat ---
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	void StartHeartbeat();
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	void StopHeartbeat();
+
+	// Records one heartbeat row immediately, independent of the timer.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordHeartbeatNow();
+
 private:
 	FString BuildTimestampString() const;
 
 	static FString EscapeCSVField(const FString& Field);
 	static FString EscapeJSONField(const FString& Field);
+
+	// RA41A helpers
+	static FString EscapeJSONStringManual(const FString& Field);
+	FString BuildRunConfigJSON(const FESCROWRunConfig& Config) const;
+	FString BuildRunSummaryJSON() const;
+	FString NextRecordID(const TCHAR* Prefix);
+	bool AppendLineToFile(const FString& FileName, const FString& Line) const;
+	bool WriteWholeFile(const FString& FileName, const FString& Content) const;
+	FString GetCurrentPhaseFromScenarioDirector() const;
+	void HeartbeatTimerTick();
+
+	int32 RunConfigCounterForRecordIDs = 0;
+	FTimerHandle HeartbeatTimerHandle;
 };

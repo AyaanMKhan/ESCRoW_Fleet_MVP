@@ -491,3 +491,317 @@ struct FESCROWSessionMetadata
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW")
 	bool bSessionActive = false;
 };
+
+// RA41A: formal per-run configuration, written by the experiment setup menu as
+// a pending config and promoted to current on level load. Distinct from
+// FESCROWSessionMetadata (which is the session subsystem's own live field
+// snapshot) - this is a self-contained, exportable record of exactly what a
+// single data-collection run was configured with.
+USTRUCT(BlueprintType)
+struct FESCROWRunConfig
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString RunID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString SessionID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString ParticipantID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString ResearcherID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString ScenarioID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString ScenarioVersion;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString ConditionID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString SupportMode;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString DisplayMode;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString VehicleControlRole;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString WorkloadLevel;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString ScenarioVariant;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString EventSalience;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString UncertaintyLevel;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	int32 RunSeed = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString MapName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString AppVersionOrBuild;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString GitCommitOrBuildLabel;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FDateTime CreatedAt;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString Notes;
+};
+
+// --- RA41A structured data-manager record types ---
+// One row per record type, appended to its own file under the run folder and
+// mirrored as a raw JSONL line in event_log_raw.jsonl. Every record carries
+// RunID + Timestamp + WorldSeconds so rows are self-describing even if a file
+// is examined in isolation from session_manifest.json.
+
+USTRUCT(BlueprintType)
+struct FESCROWScenarioEventRecord
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RecordID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RunID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FDateTime Timestamp;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float WorldSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString Phase;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EventType;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EventLabel;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString TaskingID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	int32 AffectedFollowerID = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString PlanValidity;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString PayloadJSON;
+};
+
+USTRUCT(BlueprintType)
+struct FESCROWParticipantActionRecord
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RecordID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RunID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FDateTime Timestamp;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float WorldSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString ActionType;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString Source;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString ActivePage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	int32 SelectedFollowerID = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	int32 TargetFollowerID = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString TaskingID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EventID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString PayloadJSON;
+};
+
+USTRUCT(BlueprintType)
+struct FESCROWUIExposureRecord
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RecordID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RunID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FDateTime Timestamp;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float WorldSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString PageName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString WidgetName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	int32 SelectedFollowerID = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString VisibleFields;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RelatedEventID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	bool bDiagnosticEvidenceAvailable = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString PayloadJSON;
+};
+
+USTRUCT(BlueprintType)
+struct FESCROWHeartbeatRecord
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RecordID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RunID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FDateTime Timestamp;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float WorldSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString Phase;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString ActivePage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	int32 SelectedFollowerID = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString TaskingID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString TaskingState;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString PlanValidity;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString PayloadJSON;
+};
+
+USTRUCT(BlueprintType)
+struct FESCROWStateTransitionRecord
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RecordID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RunID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FDateTime Timestamp;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float WorldSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EntityID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString EntityType;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString StateName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString OldValue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString NewValue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString Source;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RelatedEventID;
+};
+
+USTRUCT(BlueprintType)
+struct FESCROWReportRecord
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RecordID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString RunID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FDateTime Timestamp;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	float WorldSeconds = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString ReportID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString ReportType;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString FieldName;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString FieldValue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString GroundTruthValue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	int32 Score = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
+	FString PayloadJSON;
+};

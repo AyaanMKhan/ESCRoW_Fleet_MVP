@@ -160,6 +160,11 @@ public:
 private:
 	FTimerHandle TickTimerHandle;
 
+	// RA41A: promotes SessionSubsystem's pending run config (or a generated dev
+	// fallback if none is pending) to current, then starts the EventLog run and
+	// heartbeat. Called once from Initialize(), after InitializeScenario().
+	void InitializeRunDataForCurrentLevel();
+
 	void BuildMissionDSchedule();
 	void TickScenario();
 	void StartTimerIfNeeded();
