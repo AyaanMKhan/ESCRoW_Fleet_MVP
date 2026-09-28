@@ -157,7 +157,111 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|Scenario")
 	FString GetScenarioReadoutText() const;
 
+	// --- RA42A: generic (non-Mission-D) scenario phase / tasking lifecycle skeleton ---
+	// Additive alongside the existing Mission-D schedule above; does not replace it.
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Tasking")
+	EESCROWScenarioPhase CurrentPhase = EESCROWScenarioPhase::None;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Tasking")
+	FESCROWTasking ActiveTasking;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Tasking")
+	FString CurrentPlanValidity = TEXT("Unspecified");
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Tasking")
+	int32 CurrentAffectedFollowerID = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Tasking")
+	FString ScenarioCompletionReason;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Tasking")
+	bool bGenericTaskingActive = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Tasking")
+	bool bGenericScenarioComplete = false;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	EESCROWScenarioPhase GetCurrentPhase() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	FString GetCurrentPhaseName() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	FESCROWTasking GetActiveTasking() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	FString GetActiveTaskingID() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	FString GetActiveTaskingLabel() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	EESCROWTaskingState GetActiveTaskingState() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	FString GetActiveTaskingStateName() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	FString GetRequiredParticipantAction() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	FString GetCurrentPlanValidity() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	int32 GetCurrentAffectedFollowerID() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	bool IsGenericTaskingActive() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	bool IsGenericScenarioComplete() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Tasking")
+	FString GetScenarioCompletionReason() const;
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	void StartGenericScenario();
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	void SetScenarioPhase(EESCROWScenarioPhase NewPhase, FString Reason);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	void PostTasking(FString TaskingID, FString TaskingLabel, EESCROWScenarioPhase Phase, FString RequiredParticipantAction, int32 AffectedFollowerID, FString PlanValidity, FString EventID);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	bool AcknowledgeActiveTasking(FString Source);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	bool ValidateActiveTasking(FString Source);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	bool AuthorizeActiveTasking(FString Source);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	bool CompleteActiveTasking(FString CompletionReason);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	bool CancelActiveTasking(FString Reason);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	void SetPlanValidity(FString NewPlanValidity, FString Reason);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	void SetAffectedFollowerID(int32 NewAffectedFollowerID, FString Reason);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	void AdvancePhaseIfTaskingComplete();
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Tasking")
+	void EndGenericScenario(FString EndReason);
+
 private:
+	// RA42A helpers
+	FString ScenarioPhaseToText(EESCROWScenarioPhase Phase) const;
+	FString TaskingStateToText(EESCROWTaskingState State) const;
+	FString BuildTaskingPayloadJSON(const FString& ReasonOrSource) const;
+
 	FTimerHandle TickTimerHandle;
 
 	// RA41A: promotes SessionSubsystem's pending run config (or a generated dev

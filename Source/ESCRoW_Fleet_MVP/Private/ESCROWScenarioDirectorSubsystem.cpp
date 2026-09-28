@@ -25,6 +25,19 @@ namespace
 	{
 		return MapName.Contains(TEXT("FLAT_PILOT_TEST")) || MapName.Contains(TEXT("DESERT_INTEGRATION_TEST"));
 	}
+
+	// RA42A: local JSON-string escaping for BuildTaskingPayloadJSON. Mirrors
+	// UESCROWEventLogSubsystem::EscapeJSONField (private there), duplicated here
+	// rather than exposing it, since ScenarioDirector must not depend on
+	// EventLog internals.
+	FString EscapeJSONFieldLocal(const FString& Field)
+	{
+		FString Escaped = Field;
+		Escaped.ReplaceInline(TEXT("\\"), TEXT("\\\\"));
+		Escaped.ReplaceInline(TEXT("\""), TEXT("\\\""));
+		Escaped.ReplaceInline(TEXT("\n"), TEXT("\\n"));
+		return Escaped;
+	}
 }
 
 void UESCROWScenarioDirectorSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -736,4 +749,379 @@ FString UESCROWScenarioDirectorSubsystem::GetScenarioReadoutText() const
 		*GetCurrentScenarioStatus(),
 		CurrentEventMessageText.IsEmpty() ? TEXT("-") : *CurrentEventMessageText
 	);
+}
+
+// =============================== RA42A: generic scenario phase / tasking lifecycle ===============================
+// Additive skeleton alongside the Mission-D schedule above. Does not touch or replace it.
+
+FString UESCROWScenarioDirectorSubsystem::ScenarioPhaseToText(EESCROWScenarioPhase Phase) const
+{
+	switch (Phase)
+	{
+	case EESCROWScenarioPhase::None: return TEXT("None");
+	case EESCROWScenarioPhase::Preflight: return TEXT("Preflight");
+	case EESCROWScenarioPhase::PhaseA_RoutineMonitoring: return TEXT("PhaseA_RoutineMonitoring");
+	case EESCROWScenarioPhase::PhaseB_RallyBreakout: return TEXT("PhaseB_RallyBreakout");
+	case EESCROWScenarioPhase::PhaseC_DisruptionDetection: return TEXT("PhaseC_DisruptionDetection");
+	case EESCROWScenarioPhase::PhaseD_TakeoverIntervention: return TEXT("PhaseD_TakeoverIntervention");
+	case EESCROWScenarioPhase::PhaseE_PlanRepair: return TEXT("PhaseE_PlanRepair");
+	case EESCROWScenarioPhase::PhaseF_Closeout: return TEXT("PhaseF_Closeout");
+	case EESCROWScenarioPhase::Complete: return TEXT("Complete");
+	case EESCROWScenarioPhase::Aborted: return TEXT("Aborted");
+	default: return TEXT("Unknown");
+	}
+}
+
+FString UESCROWScenarioDirectorSubsystem::TaskingStateToText(EESCROWTaskingState State) const
+{
+	switch (State)
+	{
+	case EESCROWTaskingState::None: return TEXT("None");
+	case EESCROWTaskingState::Posted: return TEXT("Posted");
+	case EESCROWTaskingState::Acknowledged: return TEXT("Acknowledged");
+	case EESCROWTaskingState::Validated: return TEXT("Validated");
+	case EESCROWTaskingState::Authorized: return TEXT("Authorized");
+	case EESCROWTaskingState::Completed: return TEXT("Completed");
+	case EESCROWTaskingState::Cancelled: return TEXT("Cancelled");
+	case EESCROWTaskingState::Failed: return TEXT("Failed");
+	default: return TEXT("Unknown");
+	}
+}
+
+FString UESCROWScenarioDirectorSubsystem::BuildTaskingPayloadJSON(const FString& ReasonOrSource) const
+{
+	return FString::Printf(
+		TEXT("{\"TaskingID\":\"%s\",\"TaskingLabel\":\"%s\",\"Phase\":\"%s\",\"TaskingState\":\"%s\",\"RequiredParticipantAction\":\"%s\",\"AffectedFollowerID\":%d,\"PlanValidity\":\"%s\",\"EventID\":\"%s\",\"Reason\":\"%s\"}"),
+		*EscapeJSONFieldLocal(ActiveTasking.TaskingID),
+		*EscapeJSONFieldLocal(ActiveTasking.TaskingLabel),
+		*EscapeJSONFieldLocal(ScenarioPhaseToText(ActiveTasking.Phase)),
+		*EscapeJSONFieldLocal(TaskingStateToText(ActiveTasking.State)),
+		*EscapeJSONFieldLocal(ActiveTasking.RequiredParticipantAction),
+		ActiveTasking.AffectedFollowerID,
+		*EscapeJSONFieldLocal(ActiveTasking.PlanValidity),
+		*EscapeJSONFieldLocal(ActiveTasking.EventID),
+		*EscapeJSONFieldLocal(ReasonOrSource));
+}
+
+EESCROWScenarioPhase UESCROWScenarioDirectorSubsystem::GetCurrentPhase() const
+{
+	return CurrentPhase;
+}
+
+FString UESCROWScenarioDirectorSubsystem::GetCurrentPhaseName() const
+{
+	return ScenarioPhaseToText(CurrentPhase);
+}
+
+FESCROWTasking UESCROWScenarioDirectorSubsystem::GetActiveTasking() const
+{
+	return ActiveTasking;
+}
+
+FString UESCROWScenarioDirectorSubsystem::GetActiveTaskingID() const
+{
+	return ActiveTasking.TaskingID;
+}
+
+FString UESCROWScenarioDirectorSubsystem::GetActiveTaskingLabel() const
+{
+	return ActiveTasking.TaskingLabel;
+}
+
+EESCROWTaskingState UESCROWScenarioDirectorSubsystem::GetActiveTaskingState() const
+{
+	return ActiveTasking.State;
+}
+
+FString UESCROWScenarioDirectorSubsystem::GetActiveTaskingStateName() const
+{
+	return TaskingStateToText(ActiveTasking.State);
+}
+
+FString UESCROWScenarioDirectorSubsystem::GetRequiredParticipantAction() const
+{
+	return ActiveTasking.RequiredParticipantAction;
+}
+
+FString UESCROWScenarioDirectorSubsystem::GetCurrentPlanValidity() const
+{
+	return CurrentPlanValidity;
+}
+
+int32 UESCROWScenarioDirectorSubsystem::GetCurrentAffectedFollowerID() const
+{
+	return CurrentAffectedFollowerID;
+}
+
+bool UESCROWScenarioDirectorSubsystem::IsGenericTaskingActive() const
+{
+	return bGenericTaskingActive;
+}
+
+bool UESCROWScenarioDirectorSubsystem::IsGenericScenarioComplete() const
+{
+	return bGenericScenarioComplete;
+}
+
+FString UESCROWScenarioDirectorSubsystem::GetScenarioCompletionReason() const
+{
+	return ScenarioCompletionReason;
+}
+
+void UESCROWScenarioDirectorSubsystem::StartGenericScenario()
+{
+	CurrentPhase = EESCROWScenarioPhase::Preflight;
+	bGenericScenarioComplete = false;
+	ScenarioCompletionReason.Empty();
+	CurrentPlanValidity = TEXT("Valid");
+	CurrentAffectedFollowerID = 0;
+	ActiveTasking = FESCROWTasking();
+	bGenericTaskingActive = false;
+
+	LogScenarioEvent(TEXT("GenericScenarioStarted"), 0, TEXT("Generic scenario tasking lifecycle started."));
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("GenericScenarioStarted"), TEXT("Generic scenario tasking lifecycle started."), FString(), 0, CurrentPlanValidity, BuildTaskingPayloadJSON(TEXT("StartGenericScenario")));
+	}
+}
+
+void UESCROWScenarioDirectorSubsystem::SetScenarioPhase(EESCROWScenarioPhase NewPhase, FString Reason)
+{
+	const EESCROWScenarioPhase OldPhase = CurrentPhase;
+	if (OldPhase == NewPhase)
+	{
+		return;
+	}
+
+	CurrentPhase = NewPhase;
+
+	const FString Detail = FString::Printf(TEXT("%s -> %s (%s)"), *ScenarioPhaseToText(OldPhase), *ScenarioPhaseToText(NewPhase), *Reason);
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordStateTransitionSimple(TEXT("Scenario"), TEXT("Phase"), TEXT("Phase"), ScenarioPhaseToText(OldPhase), ScenarioPhaseToText(NewPhase), TEXT("ScenarioDirector"), ActiveTasking.EventID);
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(NewPhase), TEXT("PhaseChanged"), Detail, ActiveTasking.TaskingID, CurrentAffectedFollowerID, CurrentPlanValidity, BuildTaskingPayloadJSON(Reason));
+	}
+	LogScenarioEvent(TEXT("PhaseChanged"), CurrentAffectedFollowerID, Detail);
+}
+
+void UESCROWScenarioDirectorSubsystem::PostTasking(FString TaskingID, FString TaskingLabel, EESCROWScenarioPhase Phase, FString RequiredParticipantAction, int32 AffectedFollowerID, FString PlanValidity, FString EventID)
+{
+	ActiveTasking = FESCROWTasking();
+	ActiveTasking.TaskingID = TaskingID;
+	ActiveTasking.TaskingLabel = TaskingLabel;
+	ActiveTasking.Phase = Phase;
+	ActiveTasking.State = EESCROWTaskingState::Posted;
+	ActiveTasking.RequiredParticipantAction = RequiredParticipantAction;
+	ActiveTasking.AffectedFollowerID = AffectedFollowerID;
+	ActiveTasking.PlanValidity = PlanValidity;
+	ActiveTasking.EventID = EventID;
+	ActiveTasking.PostedAt = FDateTime::Now();
+	ActiveTasking.bIsActive = true;
+
+	bGenericTaskingActive = true;
+	CurrentPhase = Phase;
+	CurrentPlanValidity = PlanValidity;
+	CurrentAffectedFollowerID = AffectedFollowerID;
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("TaskingPosted"), TaskingLabel, TaskingID, AffectedFollowerID, PlanValidity, BuildTaskingPayloadJSON(TEXT("PostTasking")));
+		EventLog->RecordStateTransitionSimple(TaskingID, TEXT("Tasking"), TEXT("TaskingState"), TaskingStateToText(EESCROWTaskingState::None), TaskingStateToText(EESCROWTaskingState::Posted), TEXT("ScenarioDirector"), EventID);
+	}
+	LogScenarioEvent(TEXT("TaskingPosted"), AffectedFollowerID, FString::Printf(TEXT("%s: %s"), *TaskingID, *TaskingLabel));
+}
+
+bool UESCROWScenarioDirectorSubsystem::AcknowledgeActiveTasking(FString Source)
+{
+	if (!ActiveTasking.bIsActive || ActiveTasking.State != EESCROWTaskingState::Posted)
+	{
+		return false;
+	}
+
+	const EESCROWTaskingState OldState = ActiveTasking.State;
+	ActiveTasking.State = EESCROWTaskingState::Acknowledged;
+	ActiveTasking.AcknowledgedAt = FDateTime::Now();
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("TaskingAcknowledged"), ActiveTasking.TaskingLabel, ActiveTasking.TaskingID, ActiveTasking.AffectedFollowerID, CurrentPlanValidity, BuildTaskingPayloadJSON(Source));
+		EventLog->RecordStateTransitionSimple(ActiveTasking.TaskingID, TEXT("Tasking"), TEXT("TaskingState"), TaskingStateToText(OldState), TaskingStateToText(ActiveTasking.State), Source, ActiveTasking.EventID);
+	}
+	LogScenarioEvent(TEXT("TaskingAcknowledged"), ActiveTasking.AffectedFollowerID, ActiveTasking.TaskingID);
+	return true;
+}
+
+bool UESCROWScenarioDirectorSubsystem::ValidateActiveTasking(FString Source)
+{
+	if (!ActiveTasking.bIsActive || !(ActiveTasking.State == EESCROWTaskingState::Posted || ActiveTasking.State == EESCROWTaskingState::Acknowledged))
+	{
+		return false;
+	}
+
+	const EESCROWTaskingState OldState = ActiveTasking.State;
+	ActiveTasking.State = EESCROWTaskingState::Validated;
+	ActiveTasking.ValidatedAt = FDateTime::Now();
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("TaskingValidated"), ActiveTasking.TaskingLabel, ActiveTasking.TaskingID, ActiveTasking.AffectedFollowerID, CurrentPlanValidity, BuildTaskingPayloadJSON(Source));
+		EventLog->RecordStateTransitionSimple(ActiveTasking.TaskingID, TEXT("Tasking"), TEXT("TaskingState"), TaskingStateToText(OldState), TaskingStateToText(ActiveTasking.State), Source, ActiveTasking.EventID);
+	}
+	LogScenarioEvent(TEXT("TaskingValidated"), ActiveTasking.AffectedFollowerID, ActiveTasking.TaskingID);
+	return true;
+}
+
+bool UESCROWScenarioDirectorSubsystem::AuthorizeActiveTasking(FString Source)
+{
+	if (!ActiveTasking.bIsActive || !(ActiveTasking.State == EESCROWTaskingState::Validated || ActiveTasking.State == EESCROWTaskingState::Acknowledged))
+	{
+		return false;
+	}
+
+	const EESCROWTaskingState OldState = ActiveTasking.State;
+	ActiveTasking.State = EESCROWTaskingState::Authorized;
+	ActiveTasking.AuthorizedAt = FDateTime::Now();
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("TaskingAuthorized"), ActiveTasking.TaskingLabel, ActiveTasking.TaskingID, ActiveTasking.AffectedFollowerID, CurrentPlanValidity, BuildTaskingPayloadJSON(Source));
+		EventLog->RecordStateTransitionSimple(ActiveTasking.TaskingID, TEXT("Tasking"), TEXT("TaskingState"), TaskingStateToText(OldState), TaskingStateToText(ActiveTasking.State), Source, ActiveTasking.EventID);
+	}
+	LogScenarioEvent(TEXT("TaskingAuthorized"), ActiveTasking.AffectedFollowerID, ActiveTasking.TaskingID);
+	return true;
+}
+
+bool UESCROWScenarioDirectorSubsystem::CompleteActiveTasking(FString CompletionReason)
+{
+	if (!ActiveTasking.bIsActive
+		|| ActiveTasking.State == EESCROWTaskingState::Completed
+		|| ActiveTasking.State == EESCROWTaskingState::Cancelled
+		|| ActiveTasking.State == EESCROWTaskingState::Failed)
+	{
+		return false;
+	}
+
+	const EESCROWTaskingState OldState = ActiveTasking.State;
+	ActiveTasking.State = EESCROWTaskingState::Completed;
+	ActiveTasking.CompletedAt = FDateTime::Now();
+	ActiveTasking.CompletionReason = CompletionReason;
+	bGenericTaskingActive = false;
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("TaskingCompleted"), CompletionReason, ActiveTasking.TaskingID, ActiveTasking.AffectedFollowerID, CurrentPlanValidity, BuildTaskingPayloadJSON(CompletionReason));
+		EventLog->RecordStateTransitionSimple(ActiveTasking.TaskingID, TEXT("Tasking"), TEXT("TaskingState"), TaskingStateToText(OldState), TaskingStateToText(ActiveTasking.State), TEXT("ScenarioDirector"), ActiveTasking.EventID);
+	}
+	LogScenarioEvent(TEXT("TaskingCompleted"), ActiveTasking.AffectedFollowerID, FString::Printf(TEXT("%s: %s"), *ActiveTasking.TaskingID, *CompletionReason));
+
+	AdvancePhaseIfTaskingComplete();
+	return true;
+}
+
+bool UESCROWScenarioDirectorSubsystem::CancelActiveTasking(FString Reason)
+{
+	if (!ActiveTasking.bIsActive
+		|| ActiveTasking.State == EESCROWTaskingState::Completed
+		|| ActiveTasking.State == EESCROWTaskingState::Cancelled
+		|| ActiveTasking.State == EESCROWTaskingState::Failed)
+	{
+		return false;
+	}
+
+	const EESCROWTaskingState OldState = ActiveTasking.State;
+	ActiveTasking.State = EESCROWTaskingState::Cancelled;
+	ActiveTasking.CompletionReason = Reason;
+	bGenericTaskingActive = false;
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("TaskingCancelled"), Reason, ActiveTasking.TaskingID, ActiveTasking.AffectedFollowerID, CurrentPlanValidity, BuildTaskingPayloadJSON(Reason));
+		EventLog->RecordStateTransitionSimple(ActiveTasking.TaskingID, TEXT("Tasking"), TEXT("TaskingState"), TaskingStateToText(OldState), TaskingStateToText(ActiveTasking.State), TEXT("ScenarioDirector"), ActiveTasking.EventID);
+	}
+	LogScenarioEvent(TEXT("TaskingCancelled"), ActiveTasking.AffectedFollowerID, FString::Printf(TEXT("%s: %s"), *ActiveTasking.TaskingID, *Reason));
+	return true;
+}
+
+void UESCROWScenarioDirectorSubsystem::SetPlanValidity(FString NewPlanValidity, FString Reason)
+{
+	const FString OldValidity = CurrentPlanValidity;
+	if (OldValidity == NewPlanValidity)
+	{
+		return;
+	}
+
+	CurrentPlanValidity = NewPlanValidity;
+	ActiveTasking.PlanValidity = NewPlanValidity;
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordStateTransitionSimple(TEXT("Scenario"), TEXT("PlanValidity"), TEXT("PlanValidity"), OldValidity, NewPlanValidity, TEXT("ScenarioDirector"), ActiveTasking.EventID);
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("PlanValidityChanged"), Reason, ActiveTasking.TaskingID, CurrentAffectedFollowerID, NewPlanValidity, BuildTaskingPayloadJSON(Reason));
+	}
+	LogScenarioEvent(TEXT("PlanValidityChanged"), CurrentAffectedFollowerID, FString::Printf(TEXT("%s -> %s (%s)"), *OldValidity, *NewPlanValidity, *Reason));
+}
+
+void UESCROWScenarioDirectorSubsystem::SetAffectedFollowerID(int32 NewAffectedFollowerID, FString Reason)
+{
+	const int32 OldID = CurrentAffectedFollowerID;
+	if (OldID == NewAffectedFollowerID)
+	{
+		return;
+	}
+
+	CurrentAffectedFollowerID = NewAffectedFollowerID;
+	ActiveTasking.AffectedFollowerID = NewAffectedFollowerID;
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordStateTransitionSimple(TEXT("Fleet"), TEXT("AffectedFollowerID"), TEXT("AffectedFollowerID"), FString::FromInt(OldID), FString::FromInt(NewAffectedFollowerID), TEXT("ScenarioDirector"), ActiveTasking.EventID);
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("AffectedFollowerChanged"), Reason, ActiveTasking.TaskingID, NewAffectedFollowerID, CurrentPlanValidity, BuildTaskingPayloadJSON(Reason));
+	}
+	LogScenarioEvent(TEXT("AffectedFollowerChanged"), NewAffectedFollowerID, FString::Printf(TEXT("%d -> %d (%s)"), OldID, NewAffectedFollowerID, *Reason));
+}
+
+void UESCROWScenarioDirectorSubsystem::AdvancePhaseIfTaskingComplete()
+{
+	EESCROWScenarioPhase NextPhase = CurrentPhase;
+	switch (CurrentPhase)
+	{
+	case EESCROWScenarioPhase::Preflight: NextPhase = EESCROWScenarioPhase::PhaseA_RoutineMonitoring; break;
+	case EESCROWScenarioPhase::PhaseA_RoutineMonitoring: NextPhase = EESCROWScenarioPhase::PhaseB_RallyBreakout; break;
+	case EESCROWScenarioPhase::PhaseB_RallyBreakout: NextPhase = EESCROWScenarioPhase::PhaseC_DisruptionDetection; break;
+	case EESCROWScenarioPhase::PhaseC_DisruptionDetection: NextPhase = EESCROWScenarioPhase::PhaseD_TakeoverIntervention; break;
+	case EESCROWScenarioPhase::PhaseD_TakeoverIntervention: NextPhase = EESCROWScenarioPhase::PhaseE_PlanRepair; break;
+	case EESCROWScenarioPhase::PhaseE_PlanRepair: NextPhase = EESCROWScenarioPhase::PhaseF_Closeout; break;
+	case EESCROWScenarioPhase::PhaseF_Closeout: NextPhase = EESCROWScenarioPhase::Complete; break;
+	default:
+		// None/Complete/Aborted: no automatic advance.
+		return;
+	}
+
+	SetScenarioPhase(NextPhase, TEXT("AdvancePhaseIfTaskingComplete"));
+
+	if (NextPhase == EESCROWScenarioPhase::Complete)
+	{
+		EndGenericScenario(TEXT("Final phase (PhaseF_Closeout) tasking complete."));
+	}
+}
+
+void UESCROWScenarioDirectorSubsystem::EndGenericScenario(FString EndReason)
+{
+	bGenericScenarioComplete = true;
+	if (CurrentPhase != EESCROWScenarioPhase::Aborted)
+	{
+		CurrentPhase = EESCROWScenarioPhase::Complete;
+	}
+	ScenarioCompletionReason = EndReason;
+	bGenericTaskingActive = false;
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(ScenarioPhaseToText(CurrentPhase), TEXT("GenericScenarioEnded"), EndReason, ActiveTasking.TaskingID, CurrentAffectedFollowerID, CurrentPlanValidity, BuildTaskingPayloadJSON(EndReason));
+	}
+	LogScenarioEvent(TEXT("GenericScenarioEnded"), CurrentAffectedFollowerID, EndReason);
+
+	// RA42A: shutdown flush remains EventLog's own responsibility (see RA41D);
+	// this deliberately does not call EventLog->EndRun().
 }

@@ -364,6 +364,92 @@ enum class EESCROWScenarioRunState : uint8
 	Complete
 };
 
+// RA42A: generic (non-Mission-D) scenario phase for the pilot spine (Phase A-F,
+// see CLAUDE.md). Distinct from EESCROWScenarioRunState (playback machinery) and
+// from the free-text CurrentScenarioStep used by the Mission-D schedule.
+UENUM(BlueprintType)
+enum class EESCROWScenarioPhase : uint8
+{
+	None,
+	Preflight,
+	PhaseA_RoutineMonitoring,
+	PhaseB_RallyBreakout,
+	PhaseC_DisruptionDetection,
+	PhaseD_TakeoverIntervention,
+	PhaseE_PlanRepair,
+	PhaseF_Closeout,
+	Complete,
+	Aborted
+};
+
+// RA42A: lifecycle state of a single generic participant tasking.
+UENUM(BlueprintType)
+enum class EESCROWTaskingState : uint8
+{
+	None,
+	Posted,
+	Acknowledged,
+	Validated,
+	Authorized,
+	Completed,
+	Cancelled,
+	Failed
+};
+
+// RA42A: a single generic scenario tasking, owned by UESCROWScenarioDirectorSubsystem.
+// Distinct from FESCROWScenarioEvent (the Mission-D scripted-event schedule) -
+// this is the new phase-A-F tasking lifecycle skeleton.
+USTRUCT(BlueprintType)
+struct FESCROWTasking
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FString TaskingID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FString TaskingLabel;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	EESCROWScenarioPhase Phase = EESCROWScenarioPhase::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	EESCROWTaskingState State = EESCROWTaskingState::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FString RequiredParticipantAction;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	int32 AffectedFollowerID = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FString PlanValidity;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FString EventID;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FString CompletionReason;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FDateTime PostedAt;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FDateTime AcknowledgedAt;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FDateTime ValidatedAt;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FDateTime AuthorizedAt;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	FDateTime CompletedAt;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|Tasking")
+	bool bIsActive = false;
+};
+
 // A single scripted step in a scenario's event schedule. ExecuteEventByIndex
 // interprets these fields to drive UESCROWFleetSubsystem state; the optional
 // bHas*Change flags let an event leave a field untouched instead of forcing
