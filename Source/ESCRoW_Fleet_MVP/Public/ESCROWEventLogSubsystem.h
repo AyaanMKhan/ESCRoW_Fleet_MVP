@@ -19,6 +19,13 @@ class ESCROW_FLEET_MVP_API UESCROWEventLogSubsystem : public UGameInstanceSubsys
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 
+	// RA41D: GameInstanceSubsystems are torn down on PIE stop and game quit, but
+	// nothing else calls EndRun/FlushAllOutputs on that path — without this, a
+	// live run's run_summary.json/export_status.txt stay at their initial
+	// zeroed/skeleton state forever (the per-record CSV/JSONL files are fine;
+	// they're appended immediately per record, not buffered).
+	virtual void Deinitialize() override;
+
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|EventLog")
 	TArray<FESCROWEventLogEntry> EventEntries;
 

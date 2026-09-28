@@ -20,6 +20,16 @@ void UESCROWEventLogSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	ResetLog();
 }
 
+void UESCROWEventLogSubsystem::Deinitialize()
+{
+	if (bRunActive)
+	{
+		EndRun(TEXT("GameInstanceShutdown"));
+	}
+
+	Super::Deinitialize();
+}
+
 void UESCROWEventLogSubsystem::ResetLog()
 {
 	EventEntries.Reset();
@@ -480,12 +490,11 @@ void UESCROWEventLogSubsystem::EndRun(const FString& EndReason)
 	}
 
 	StopHeartbeat();
+	bRunActive = false;
 	FlushAllOutputs();
 
 	const FString StatusLine = FString::Printf(TEXT("Run ended at %s. Reason: %s"), *FDateTime::Now().ToIso8601(), *EndReason);
 	AppendLineToFile(TEXT("export_status.txt"), StatusLine);
-
-	bRunActive = false;
 }
 
 FString UESCROWEventLogSubsystem::GetCurrentRunFolder() const
