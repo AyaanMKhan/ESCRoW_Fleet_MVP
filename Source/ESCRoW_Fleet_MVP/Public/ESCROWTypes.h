@@ -364,6 +364,21 @@ enum class EESCROWScenarioRunState : uint8
 	Complete
 };
 
+// Internal scenario-runtime startup lifecycle: distinct from EESCROWScenarioRunState
+// (Mission-D event-playback machinery). This tracks whether the world/services a
+// scenario needs (CTM/telemetry, fleet refs, EventLog, session/run metadata) are
+// actually present and validated at startup - not participant-facing.
+UENUM(BlueprintType)
+enum class EESCROWScenarioRuntimeState : uint8
+{
+	NotInitialized,
+	WorldDetected,
+	ServicesChecking,
+	Ready,
+	Failed,
+	Stopped
+};
+
 // RA42A: generic (non-Mission-D) scenario phase for the pilot spine (Phase A-F,
 // see CLAUDE.md). Distinct from EESCROWScenarioRunState (playback machinery) and
 // from the free-text CurrentScenarioStep used by the Mission-D schedule.

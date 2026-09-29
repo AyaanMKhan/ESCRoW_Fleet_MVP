@@ -110,6 +110,65 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Scenario")
 	FString TelemetrySourceStatus = TEXT("Not checked");
 
+	// --- Scenario runtime startup lifecycle (internal, not participant-facing) ---
+	// NotInitialized -> WorldDetected (Initialize) -> ServicesChecking -> Ready/Failed
+	// (OnWorldBeginPlay, playable scenario maps only) -> Stopped (Deinitialize).
+	// Menu/setup maps stop at WorldDetected - there are no services to validate there.
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|ScenarioRuntime")
+	EESCROWScenarioRuntimeState ScenarioRuntimeState = EESCROWScenarioRuntimeState::NotInitialized;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|ScenarioRuntime")
+	FString RuntimeWorldName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|ScenarioRuntime")
+	bool bRuntimeIsPlayableScenario = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|ScenarioRuntime")
+	FString RuntimeScenarioID;
+
+	// Valid actor refs out of 5 (CV + F1-F4). CV checked via the resolved
+	// ConvoyTelemetryManager's own VehicleRefs (the same ground truth GPS/Reports
+	// already use); F1-F4 checked directly against UESCROWFleetSubsystem.
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|ScenarioRuntime")
+	int32 RuntimeFleetValidCount = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|ScenarioRuntime")
+	bool bRuntimeEventLogAvailable = false;
+
+	// Whether EventLog actually has an active run (real session/run metadata
+	// available), not just whether the subsystem exists.
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|ScenarioRuntime")
+	bool bRuntimeSessionAvailable = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|ScenarioRuntime")
+	FString RuntimeFailureReason;
+
+	// Called once from Initialize(): detects the world/map, classifies it, and
+	// transitions NotInitialized -> WorldDetected. Does not check services yet
+	// (placed actors/CTM are not reliably available this early - see
+	// EnsureTelemetrySource's own OnWorldBeginPlay-timing note).
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|ScenarioRuntime")
+	void BeginScenarioRuntimeForWorld();
+
+	// Called once from OnWorldBeginPlay(), after EnsureTelemetrySource(), on
+	// playable scenario maps only. Checks telemetry/CTM, fleet ref count,
+	// EventLog, and session/run availability, then calls MarkScenarioRuntimeReady
+	// or MarkScenarioRuntimeFailed. Logs ScenarioRuntimeServiceCheck either way.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|ScenarioRuntime")
+	void ValidateScenarioRuntimeServices();
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|ScenarioRuntime")
+	void MarkScenarioRuntimeReady();
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|ScenarioRuntime")
+	void MarkScenarioRuntimeFailed(const FString& Reason);
+
+	// Compact one-line summary for debugging/logging, e.g.
+	// "Ready | World=MAP_ESCROW_FLAT_PILOT_TEST | Fleet=5/5 | EventLog=Yes | Session=Yes".
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|ScenarioRuntime")
+	FString GetScenarioRuntimeStateSummary() const;
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Scenario")
 	bool StartScenario(EESCROWScenarioPlaybackMode Mode);
 
@@ -299,4 +358,12 @@ private:
 	class UESCROWEventLogSubsystem* GetEventLog() const;
 	static FString FormatMissionTime(float Seconds);
 	FString RunStateToText() const;
+
+	// Scenario runtime lifecycle helpers
+	FString ScenarioRuntimeStateToText(EESCROWScenarioRuntimeState State) const;
+	// Counts valid F1-F4 refs from UESCROWFleetSubsystem plus CV (via the resolved
+	// ConvoyTelemetryManager's own VehicleRefs[0], read through reflection since
+	// BP_ESCROW_ConvoyTelemetryManager is a pure-Blueprint class with no C++ base).
+	int32 ComputeRuntimeFleetValidCount() const;
+	void LogScenarioRuntimeEvent(const FString& EventType, const FString& Detail) const;
 };

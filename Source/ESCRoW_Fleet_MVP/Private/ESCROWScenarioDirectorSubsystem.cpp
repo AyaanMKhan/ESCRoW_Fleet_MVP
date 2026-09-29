@@ -51,7 +51,23 @@ void UESCROWScenarioDirectorSubsystem::Initialize(FSubsystemCollectionBase& Coll
 {
 	Super::Initialize(Collection);
 	InitializeScenario();
+	// Run/EventLog must start before BeginScenarioRuntimeForWorld() so its
+	// ScenarioRuntimeInitializing event actually reaches the structured log
+	// instead of being dropped by RecordScenarioEvent's "no active run" guard.
 	InitializeRunDataForCurrentLevel();
+	BeginScenarioRuntimeForWorld();
+}
+
+void UESCROWScenarioDirectorSubsystem::Deinitialize()
+{
+	if (bRuntimeIsPlayableScenario && ScenarioRuntimeState != EESCROWScenarioRuntimeState::NotInitialized)
+	{
+		ScenarioRuntimeState = EESCROWScenarioRuntimeState::Stopped;
+		UE_LOG(LogTemp, Log, TEXT("ESCROWScenarioDirector: ScenarioRuntimeStopped - %s"), *GetScenarioRuntimeStateSummary());
+	}
+
+	ClearTimer();
+	Super::Deinitialize();
 }
 
 void UESCROWScenarioDirectorSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -66,6 +82,179 @@ void UESCROWScenarioDirectorSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	// OnWorldBeginPlay (fired once the world is actually ready for actors to
 	// interact) correctly finds it. This is the right hook for the guarantee.
 	EnsureTelemetrySource();
+
+	if (bRuntimeIsPlayableScenario)
+	{
+		ValidateScenarioRuntimeServices();
+	}
+}
+
+void UESCROWScenarioDirectorSubsystem::BeginScenarioRuntimeForWorld()
+{
+	UWorld* World = GetWorld();
+	RuntimeWorldName = World ? World->GetMapName() : FString();
+	bRuntimeIsPlayableScenario = IsPilotOrScenarioMap(RuntimeWorldName);
+	ScenarioRuntimeState = EESCROWScenarioRuntimeState::WorldDetected;
+	RuntimeFailureReason.Empty();
+
+	LogScenarioRuntimeEvent(TEXT("ScenarioRuntimeInitializing"), FString::Printf(
+		TEXT("World=%s IsPlayableScenario=%s"), *RuntimeWorldName, bRuntimeIsPlayableScenario ? TEXT("true") : TEXT("false")));
+}
+
+void UESCROWScenarioDirectorSubsystem::ValidateScenarioRuntimeServices()
+{
+	// Menu/setup or unrecognized maps have no fleet/telemetry services to
+	// validate; leave the runtime at WorldDetected rather than misreporting a
+	// Ready/Failed verdict for a world that was never meant to have a scenario.
+	if (!bRuntimeIsPlayableScenario)
+	{
+		return;
+	}
+
+	ScenarioRuntimeState = EESCROWScenarioRuntimeState::ServicesChecking;
+
+	UESCROWEventLogSubsystem* EventLog = GetEventLog();
+	bRuntimeEventLogAvailable = (EventLog != nullptr);
+	bRuntimeSessionAvailable = (EventLog != nullptr) && EventLog->GetRunActive();
+	RuntimeFleetValidCount = ComputeRuntimeFleetValidCount();
+	RuntimeScenarioID = (EventLog && !EventLog->CurrentRunID.IsEmpty()) ? EventLog->CurrentRunID : ScenarioID;
+
+	LogScenarioRuntimeEvent(TEXT("ScenarioRuntimeServiceCheck"), GetScenarioRuntimeStateSummary());
+
+	// Fleet ref count is informational only (not gated on): individual vehicles
+	// register themselves with UESCROWFleetSubsystem from their own BeginPlay,
+	// which may not all have run yet at this exact point in world-begin-play -
+	// a low count here can be a startup-order snapshot, not a real failure. The
+	// count is still real and honestly computed, just not used as a Ready/Failed
+	// gate. Telemetry source and EventLog are the two things that are load-bearing.
+	if (!bTelemetrySourceAvailable)
+	{
+		MarkScenarioRuntimeFailed(TEXT("Telemetry source unavailable: ") + TelemetrySourceStatus);
+		return;
+	}
+
+	if (!bRuntimeEventLogAvailable)
+	{
+		MarkScenarioRuntimeFailed(TEXT("EventLog subsystem unavailable."));
+		return;
+	}
+
+	MarkScenarioRuntimeReady();
+}
+
+void UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeReady()
+{
+	ScenarioRuntimeState = EESCROWScenarioRuntimeState::Ready;
+	RuntimeFailureReason.Empty();
+	LogScenarioRuntimeEvent(TEXT("ScenarioRuntimeReady"), GetScenarioRuntimeStateSummary());
+}
+
+void UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeFailed(const FString& Reason)
+{
+	ScenarioRuntimeState = EESCROWScenarioRuntimeState::Failed;
+	RuntimeFailureReason = Reason;
+	LogScenarioRuntimeEvent(TEXT("ScenarioRuntimeFailed"), GetScenarioRuntimeStateSummary());
+}
+
+FString UESCROWScenarioDirectorSubsystem::GetScenarioRuntimeStateSummary() const
+{
+	FString Summary = FString::Printf(
+		TEXT("%s | World=%s | ScenarioID=%s | Telemetry=%s | Fleet=%d/5 | EventLog=%s | Session=%s"),
+		*ScenarioRuntimeStateToText(ScenarioRuntimeState),
+		*RuntimeWorldName,
+		*RuntimeScenarioID,
+		*TelemetrySourceStatus,
+		RuntimeFleetValidCount,
+		bRuntimeEventLogAvailable ? TEXT("Yes") : TEXT("No"),
+		bRuntimeSessionAvailable ? TEXT("Yes") : TEXT("No"));
+
+	if (!RuntimeFailureReason.IsEmpty())
+	{
+		Summary += FString::Printf(TEXT(" | Reason=%s"), *RuntimeFailureReason);
+	}
+
+	return Summary;
+}
+
+FString UESCROWScenarioDirectorSubsystem::ScenarioRuntimeStateToText(EESCROWScenarioRuntimeState State) const
+{
+	switch (State)
+	{
+	case EESCROWScenarioRuntimeState::NotInitialized: return TEXT("NotInitialized");
+	case EESCROWScenarioRuntimeState::WorldDetected: return TEXT("WorldDetected");
+	case EESCROWScenarioRuntimeState::ServicesChecking: return TEXT("ServicesChecking");
+	case EESCROWScenarioRuntimeState::Ready: return TEXT("Ready");
+	case EESCROWScenarioRuntimeState::Failed: return TEXT("Failed");
+	case EESCROWScenarioRuntimeState::Stopped: return TEXT("Stopped");
+	default: return TEXT("Unknown");
+	}
+}
+
+int32 UESCROWScenarioDirectorSubsystem::ComputeRuntimeFleetValidCount() const
+{
+	int32 ValidCount = 0;
+
+	if (const UESCROWFleetSubsystem* Fleet = GetFleet())
+	{
+		for (const FESCROWFollowerStatus& Status : Fleet->FollowerStatuses)
+		{
+			if (Status.FollowerID >= 1 && Status.FollowerID <= 4 && IsValid(Status.ActorRef))
+			{
+				++ValidCount;
+			}
+		}
+	}
+
+	UWorld* World = GetWorld();
+	if (World && bTelemetrySourceAvailable)
+	{
+		// CV validity is checked via the resolved ConvoyTelemetryManager's own
+		// VehicleRefs[0] (the same ground truth GPS/Reports already read), called
+		// through reflection since BP_ESCROW_ConvoyTelemetryManager is a
+		// pure-Blueprint class with no C++ base to declare this call against.
+		UClass* CTMClass = StaticLoadClass(AActor::StaticClass(), nullptr, ConvoyTelemetryManagerClassPath);
+		if (CTMClass)
+		{
+			for (TActorIterator<AActor> It(World, CTMClass); It; ++It)
+			{
+				if (!IsValid(*It))
+				{
+					continue;
+				}
+
+				if (UFunction* Func = It->FindFunction(FName(TEXT("GetVehicleRefs"))))
+				{
+					struct FGetVehicleRefsParams
+					{
+						TArray<AActor*> ReturnValue;
+					} Params;
+
+					It->ProcessEvent(Func, &Params);
+					if (Params.ReturnValue.IsValidIndex(0) && IsValid(Params.ReturnValue[0]))
+					{
+						++ValidCount;
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	return ValidCount;
+}
+
+void UESCROWScenarioDirectorSubsystem::LogScenarioRuntimeEvent(const FString& EventType, const FString& Detail) const
+{
+	UE_LOG(LogTemp, Log, TEXT("ESCROWScenarioDirector: %s - %s"), *EventType, *Detail);
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(ScenarioRuntimeStateToText(ScenarioRuntimeState), EventType, Detail, FString(), 0, TEXT("Unspecified"), FString());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ESCROWScenarioDirector: EventLog unavailable - %s not recorded to structured log."), *EventType);
+	}
 }
 
 void UESCROWScenarioDirectorSubsystem::EnsureTelemetrySource()
@@ -234,12 +423,6 @@ void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()
 
 	// Unrecognized map with no pending config: be conservative rather than guess.
 	UE_LOG(LogTemp, Warning, TEXT("ESCROWScenarioDirector: unrecognized map %s loaded with no pending run config; EventLog left inactive."), *RawMapName);
-}
-
-void UESCROWScenarioDirectorSubsystem::Deinitialize()
-{
-	ClearTimer();
-	Super::Deinitialize();
 }
 
 UESCROWFleetSubsystem* UESCROWScenarioDirectorSubsystem::GetFleet() const
