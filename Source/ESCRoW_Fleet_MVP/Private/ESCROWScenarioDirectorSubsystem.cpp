@@ -7,6 +7,8 @@
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
 #include "TimerManager.h"
+#include "EngineUtils.h"
+#include "GameFramework/Actor.h"
 
 namespace
 {
@@ -25,6 +27,11 @@ namespace
 	{
 		return MapName.Contains(TEXT("FLAT_PILOT_TEST")) || MapName.Contains(TEXT("DESERT_INTEGRATION_TEST"));
 	}
+
+	// Central telemetry-source guarantee (see EnsureTelemetrySource). Hardcoded
+	// path rather than a UPROPERTY(TSubclassOf) so this stays a self-contained
+	// startup guarantee with no new editor-facing configuration surface.
+	const TCHAR* ConvoyTelemetryManagerClassPath = TEXT("/Game/ESCROW/Blueprints/Scenario/BP_ESCROW_ConvoyTelemetryManager.BP_ESCROW_ConvoyTelemetryManager_C");
 
 	// RA42A: local JSON-string escaping for BuildTaskingPayloadJSON. Mirrors
 	// UESCROWEventLogSubsystem::EscapeJSONField (private there), duplicated here
@@ -45,6 +52,85 @@ void UESCROWScenarioDirectorSubsystem::Initialize(FSubsystemCollectionBase& Coll
 	Super::Initialize(Collection);
 	InitializeScenario();
 	InitializeRunDataForCurrentLevel();
+}
+
+void UESCROWScenarioDirectorSubsystem::OnWorldBeginPlay(UWorld& InWorld)
+{
+	Super::OnWorldBeginPlay(InWorld);
+
+	// Placed level actors (including a hand-placed ConvoyTelemetryManager) are
+	// not reliably visible to a TActorIterator scan yet during Initialize() -
+	// confirmed via PIE testing: a mid-session level transition (menu -> pilot
+	// map via "Start Session") still had an empty actor scan at Initialize()
+	// time even though the map has one placed, while the same scan at
+	// OnWorldBeginPlay (fired once the world is actually ready for actors to
+	// interact) correctly finds it. This is the right hook for the guarantee.
+	EnsureTelemetrySource();
+}
+
+void UESCROWScenarioDirectorSubsystem::EnsureTelemetrySource()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const FString RawMapName = World->GetMapName();
+	if (!IsPilotOrScenarioMap(RawMapName))
+	{
+		// Menu/setup or unrecognized maps have no fleet to instrument; leave
+		// telemetry unresolved rather than spawning a manager with nothing to find.
+		bTelemetrySourceAvailable = false;
+		TelemetrySourceStatus = TEXT("Not applicable (non-scenario map).");
+		return;
+	}
+
+	UClass* CTMClass = StaticLoadClass(AActor::StaticClass(), nullptr, ConvoyTelemetryManagerClassPath);
+	if (!CTMClass)
+	{
+		bTelemetrySourceAvailable = false;
+		TelemetrySourceStatus = TEXT("Telemetry unavailable: ConvoyTelemetryManager class failed to load.");
+		UE_LOG(LogTemp, Error, TEXT("ESCROWScenarioDirector: could not load class %s to guarantee a telemetry source."), ConvoyTelemetryManagerClassPath);
+		if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+		{
+			EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("TelemetrySourceMissing"), TelemetrySourceStatus, FString(), 0, TEXT("Unspecified"), FString());
+		}
+		return;
+	}
+
+	for (TActorIterator<AActor> It(World, CTMClass); It; ++It)
+	{
+		if (IsValid(*It))
+		{
+			bTelemetrySourceAvailable = true;
+			TelemetrySourceStatus = TEXT("Telemetry source present (placed in level).");
+			return;
+		}
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* Spawned = World->SpawnActor<AActor>(CTMClass, FTransform::Identity, SpawnParams);
+
+	bTelemetrySourceAvailable = (Spawned != nullptr);
+	TelemetrySourceStatus = Spawned
+		? TEXT("Telemetry source spawned at scenario startup (no ConvoyTelemetryManager was placed in this map).")
+		: TEXT("Telemetry unavailable: failed to spawn ConvoyTelemetryManager.");
+
+	if (Spawned)
+	{
+		UE_LOG(LogTemp, Log, TEXT("ESCROWScenarioDirector: %s"), *TelemetrySourceStatus);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("ESCROWScenarioDirector: %s"), *TelemetrySourceStatus);
+	}
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, Spawned ? TEXT("TelemetrySourceSpawned") : TEXT("TelemetrySourceMissing"), TelemetrySourceStatus, FString(), 0, TEXT("Unspecified"), FString());
+	}
 }
 
 void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()

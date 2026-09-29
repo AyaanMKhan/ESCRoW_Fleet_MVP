@@ -28,6 +28,7 @@ class ESCROW_FLEET_MVP_API UESCROWScenarioDirectorSubsystem : public UWorldSubsy
 public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
+	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Scenario")
 	FString ScenarioID = TEXT("MISSION_D_V1");
@@ -90,6 +91,24 @@ public:
 	// Builds the Mission D schedule if not already loaded. Does not start playback.
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Scenario")
 	void InitializeScenario();
+
+	// Central telemetry-source guarantee: every playable scenario map should
+	// have a live BP_ESCROW_ConvoyTelemetryManager (GPS's data source), without
+	// relying on a human remembering to place one in each level. Idempotent -
+	// does nothing if one already exists in the world (placed or previously
+	// auto-spawned). Spawns one from BP_ESCROW_ConvoyTelemetryManager if none is
+	// found; that class resolves CV/F1-F4 purely through UESCROWFleetSubsystem
+	// and BP_ESCROW_PlayerController at its own BeginPlay/Tick, so spawning it
+	// here needs no map-specific data. No-ops on menu/setup maps. Called once
+	// from Initialize().
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Scenario")
+	void EnsureTelemetrySource();
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Scenario")
+	bool bTelemetrySourceAvailable = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Scenario")
+	FString TelemetrySourceStatus = TEXT("Not checked");
 
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Scenario")
 	bool StartScenario(EESCROWScenarioPlaybackMode Mode);
