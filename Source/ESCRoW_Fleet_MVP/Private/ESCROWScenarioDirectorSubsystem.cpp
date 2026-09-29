@@ -9,12 +9,25 @@
 #include "TimerManager.h"
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
+#include "UObject/UnrealType.h"
 
 namespace
 {
 	const FString Milestone_F3TakeoverActive = TEXT("F3TakeoverActive");
 	const FString Milestone_F3ReturnComplete = TEXT("F3ReturnComplete");
 	constexpr float ScenarioTickInterval = 0.25f;
+
+	// Scenario runtime deferred service-check timing (see TickServiceCheck).
+	// 5.0s is the top of the suggested 3-5s range. Fleet was observed live
+	// stuck at exactly 4/5 with zero variance across ~17 checks - not a slow
+	// settle - which traced to ComputeRuntimeFleetValidCount calling
+	// AActor::FindFunction(TEXT("GetVehicleRefs")) against the CV's
+	// VehicleRefs array, a plain UPROPERTY with no such UFunction, so the CV
+	// contribution silently never counted. Fixed via direct FProperty
+	// reflection (see ComputeRuntimeFleetValidCount); 5.0s is kept as
+	// reasonable PIE startup margin, not because timing was ever the cause.
+	constexpr float ServiceCheckIntervalSeconds = 0.25f;
+	constexpr float ServiceCheckTimeoutSeconds = 5.0f;
 
 	// RA41B PART 1: menu/setup vs. pilot/scenario map detection. Substring match
 	// so this is robust to the "UEDPIE_N_" prefix PIE adds to World->GetMapName().
@@ -67,6 +80,7 @@ void UESCROWScenarioDirectorSubsystem::Deinitialize()
 	}
 
 	ClearTimer();
+	ClearServiceCheckTimer();
 	Super::Deinitialize();
 }
 
@@ -112,6 +126,32 @@ void UESCROWScenarioDirectorSubsystem::ValidateScenarioRuntimeServices()
 	}
 
 	ScenarioRuntimeState = EESCROWScenarioRuntimeState::ServicesChecking;
+	ServiceCheckElapsedSeconds = 0.0f;
+	LastLoggedRuntimeFleetValidCount = -1;
+	bServiceCheckInitialLogDone = false;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ServiceCheckTimerHandle);
+		World->GetTimerManager().SetTimer(ServiceCheckTimerHandle, this, &UESCROWScenarioDirectorSubsystem::TickServiceCheck, ServiceCheckIntervalSeconds, true);
+	}
+
+	// Run the first check immediately rather than waiting a full interval - a
+	// world where the fleet is already fully registered by this point (as can
+	// happen) reaches Ready right away instead of always paying one tick's delay.
+	TickServiceCheck();
+}
+
+void UESCROWScenarioDirectorSubsystem::TickServiceCheck()
+{
+	// Already resolved (Ready/Failed) by an earlier tick, or the runtime moved
+	// on for some other reason; stop ticking rather than re-evaluating a decision
+	// that's already been made.
+	if (ScenarioRuntimeState != EESCROWScenarioRuntimeState::ServicesChecking)
+	{
+		ClearServiceCheckTimer();
+		return;
+	}
 
 	UESCROWEventLogSubsystem* EventLog = GetEventLog();
 	bRuntimeEventLogAvailable = (EventLog != nullptr);
@@ -119,27 +159,64 @@ void UESCROWScenarioDirectorSubsystem::ValidateScenarioRuntimeServices()
 	RuntimeFleetValidCount = ComputeRuntimeFleetValidCount();
 	RuntimeScenarioID = (EventLog && !EventLog->CurrentRunID.IsEmpty()) ? EventLog->CurrentRunID : ScenarioID;
 
-	LogScenarioRuntimeEvent(TEXT("ScenarioRuntimeServiceCheck"), GetScenarioRuntimeStateSummary());
+	if (!bServiceCheckInitialLogDone)
+	{
+		bServiceCheckInitialLogDone = true;
+		LastLoggedRuntimeFleetValidCount = RuntimeFleetValidCount;
+		LogScenarioRuntimeEvent(TEXT("ScenarioRuntimeServiceCheck"), GetScenarioRuntimeStateSummary());
+	}
 
-	// Fleet ref count is informational only (not gated on): individual vehicles
-	// register themselves with UESCROWFleetSubsystem from their own BeginPlay,
-	// which may not all have run yet at this exact point in world-begin-play -
-	// a low count here can be a startup-order snapshot, not a real failure. The
-	// count is still real and honestly computed, just not used as a Ready/Failed
-	// gate. Telemetry source and EventLog are the two things that are load-bearing.
+	// Telemetry source and EventLog are load-bearing: fail immediately rather
+	// than waiting out the timeout, since retrying won't fix a missing subsystem.
 	if (!bTelemetrySourceAvailable)
 	{
+		ClearServiceCheckTimer();
 		MarkScenarioRuntimeFailed(TEXT("Telemetry source unavailable: ") + TelemetrySourceStatus);
 		return;
 	}
 
 	if (!bRuntimeEventLogAvailable)
 	{
+		ClearServiceCheckTimer();
 		MarkScenarioRuntimeFailed(TEXT("EventLog subsystem unavailable."));
 		return;
 	}
 
-	MarkScenarioRuntimeReady();
+	// Fleet refs (CV+F1-F4) register asynchronously from each vehicle's own
+	// BeginPlay, which can run after this world-subsystem's first check - keep
+	// polling until they settle to 5/5, or give up after ServiceCheckTimeoutSeconds.
+	if (RuntimeFleetValidCount >= 5)
+	{
+		ClearServiceCheckTimer();
+		MarkScenarioRuntimeReady();
+		return;
+	}
+
+	ServiceCheckElapsedSeconds += ServiceCheckIntervalSeconds;
+
+	if (ServiceCheckElapsedSeconds >= ServiceCheckTimeoutSeconds)
+	{
+		ClearServiceCheckTimer();
+		MarkScenarioRuntimeFailed(FString::Printf(
+			TEXT("Fleet refs did not reach 5/5 within timeout (Fleet=%d/5 after %.1fs)."),
+			RuntimeFleetValidCount, ServiceCheckElapsedSeconds));
+		return;
+	}
+
+	// Avoid per-tick log spam: only log when the fleet count actually changes.
+	if (RuntimeFleetValidCount != LastLoggedRuntimeFleetValidCount)
+	{
+		LastLoggedRuntimeFleetValidCount = RuntimeFleetValidCount;
+		LogScenarioRuntimeEvent(TEXT("ScenarioRuntimeFleetPending"), GetScenarioRuntimeStateSummary());
+	}
+}
+
+void UESCROWScenarioDirectorSubsystem::ClearServiceCheckTimer()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ServiceCheckTimerHandle);
+	}
 }
 
 void UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeReady()
@@ -209,9 +286,16 @@ int32 UESCROWScenarioDirectorSubsystem::ComputeRuntimeFleetValidCount() const
 	if (World && bTelemetrySourceAvailable)
 	{
 		// CV validity is checked via the resolved ConvoyTelemetryManager's own
-		// VehicleRefs[0] (the same ground truth GPS/Reports already read), called
-		// through reflection since BP_ESCROW_ConvoyTelemetryManager is a
-		// pure-Blueprint class with no C++ base to declare this call against.
+		// VehicleRefs[0] (the same ground truth GPS/Reports already read).
+		// VehicleRefs is a plain TArray<AActor*> UPROPERTY, not a UFunction -
+		// confirmed via ObjectTools.list_properties after an earlier version of
+		// this code called AActor::FindFunction(TEXT("GetVehicleRefs")), which
+		// silently returned nullptr every time (no such UFunction exists; the
+		// DSL's "GetVehicleRefs" is just how it names an auto-generated variable
+		// getter node, not a real reflected function), permanently undercounting
+		// CV by exactly 1 - read the array property directly via FProperty
+		// reflection instead, since BP_ESCROW_ConvoyTelemetryManager is a
+		// pure-Blueprint class with no C++ base to declare a typed accessor against.
 		UClass* CTMClass = StaticLoadClass(AActor::StaticClass(), nullptr, ConvoyTelemetryManagerClassPath);
 		if (CTMClass)
 		{
@@ -222,17 +306,20 @@ int32 UESCROWScenarioDirectorSubsystem::ComputeRuntimeFleetValidCount() const
 					continue;
 				}
 
-				if (UFunction* Func = It->FindFunction(FName(TEXT("GetVehicleRefs"))))
+				if (FArrayProperty* ArrayProp = FindFProperty<FArrayProperty>(CTMClass, TEXT("VehicleRefs")))
 				{
-					struct FGetVehicleRefsParams
+					FObjectProperty* InnerObjectProp = CastField<FObjectProperty>(ArrayProp->Inner);
+					if (InnerObjectProp)
 					{
-						TArray<AActor*> ReturnValue;
-					} Params;
-
-					It->ProcessEvent(Func, &Params);
-					if (Params.ReturnValue.IsValidIndex(0) && IsValid(Params.ReturnValue[0]))
-					{
-						++ValidCount;
+						FScriptArrayHelper ArrayHelper(ArrayProp, ArrayProp->ContainerPtrToValuePtr<void>(*It));
+						if (ArrayHelper.Num() > 0)
+						{
+							UObject* CVRef = InnerObjectProp->GetObjectPropertyValue(ArrayHelper.GetRawPtr(0));
+							if (IsValid(CVRef))
+							{
+								++ValidCount;
+							}
+						}
 					}
 				}
 				break;

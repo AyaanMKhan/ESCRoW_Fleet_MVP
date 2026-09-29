@@ -152,9 +152,12 @@ public:
 	void BeginScenarioRuntimeForWorld();
 
 	// Called once from OnWorldBeginPlay(), after EnsureTelemetrySource(), on
-	// playable scenario maps only. Checks telemetry/CTM, fleet ref count,
-	// EventLog, and session/run availability, then calls MarkScenarioRuntimeReady
-	// or MarkScenarioRuntimeFailed. Logs ScenarioRuntimeServiceCheck either way.
+	// playable scenario maps only. Logs ScenarioRuntimeServiceCheck immediately,
+	// then starts a repeating deferred check (every ServiceCheckIntervalSeconds)
+	// that waits for fleet refs to reach 5/5 before calling MarkScenarioRuntimeReady.
+	// Telemetry/EventLog failures fail immediately, without waiting out the
+	// timeout; a fleet count still below 5/5 at ServiceCheckTimeoutSeconds calls
+	// MarkScenarioRuntimeFailed instead. See TickServiceCheck for the per-tick logic.
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|ScenarioRuntime")
 	void ValidateScenarioRuntimeServices();
 
@@ -366,4 +369,17 @@ private:
 	// BP_ESCROW_ConvoyTelemetryManager is a pure-Blueprint class with no C++ base).
 	int32 ComputeRuntimeFleetValidCount() const;
 	void LogScenarioRuntimeEvent(const FString& EventType, const FString& Detail) const;
+
+	// Repeating timer callback started by ValidateScenarioRuntimeServices. Re-checks
+	// telemetry/EventLog/fleet count every ServiceCheckIntervalSeconds; resolves to
+	// Ready (fleet=5/5), Failed (telemetry/EventLog missing, or timeout reached), or
+	// logs ScenarioRuntimeFleetPending (only when the fleet count changes, to avoid
+	// per-tick log spam) and keeps waiting.
+	void TickServiceCheck();
+	void ClearServiceCheckTimer();
+
+	FTimerHandle ServiceCheckTimerHandle;
+	float ServiceCheckElapsedSeconds = 0.0f;
+	int32 LastLoggedRuntimeFleetValidCount = -1;
+	bool bServiceCheckInitialLogDone = false;
 };
