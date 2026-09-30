@@ -48,6 +48,30 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Fleet")
 	int32 CommandCounter = 0;
 
+	// Runtime/scenario-owned mission reports for the operator Reports deck.
+	// Populated by GenerateInitialMissionReports, never written by the HUD.
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Fleet")
+	TArray<FESCROWMissionReport> MissionReports;
+
+	// Idempotent: seeds the deterministic initial report set (Mission Brief +
+	// Fleet Status) if MissionReports is still empty. Called once by
+	// UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeReady(); safe to
+	// call again (no-ops if reports already exist).
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	void GenerateInitialMissionReports(const FString& ScenarioName, float MissionTime);
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
+	int32 GetMissionReportCount() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
+	bool GetMissionReportByIndex(int32 Index, FESCROWMissionReport& OutReport) const;
+
+	// No-ops (returns false) if the report at Index does not require
+	// acknowledgement. Never triggers report submission or any other backend
+	// effect - purely marks bAcknowledged on the record.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	bool AcknowledgeMissionReport(int32 Index);
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
 	void RegisterFollower(int32 FollowerID, const FString& Callsign, AActor* ActorRef);
 

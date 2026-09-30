@@ -532,3 +532,79 @@ void UESCROWFleetSubsystem::AddHUDMessage(EESCROWMessageSource Source, EESCROWMe
 		HUDMessages.RemoveAt(0);
 	}
 }
+
+void UESCROWFleetSubsystem::GenerateInitialMissionReports(const FString& ScenarioName, float MissionTime)
+{
+	if (MissionReports.Num() > 0)
+	{
+		// Already seeded - idempotent no-op.
+		return;
+	}
+
+	FESCROWMissionReport Brief;
+	Brief.ReportID = TEXT("RPT-0001-BRIEF");
+	Brief.ReportType = EESCROWReportType::Text;
+	Brief.Title = TEXT("Mission Brief");
+	Brief.Source = TEXT("ScenarioDirector");
+	Brief.BodyText = FString::Printf(TEXT("Scenario: %s. Convoy operations underway. Monitor follower spacing, autonomy state, and route progress. Report any deviation requiring operator intervention."), *ScenarioName);
+	Brief.ReceivedMissionTime = MissionTime;
+	Brief.bRequiresAck = false;
+	Brief.bAcknowledged = false;
+	MissionReports.Add(Brief);
+
+	FESCROWMissionReport FleetStatus;
+	FleetStatus.ReportID = TEXT("RPT-0002-FLEET");
+	FleetStatus.ReportType = EESCROWReportType::FleetTelemetry;
+	FleetStatus.Title = TEXT("Fleet Status");
+	FleetStatus.Source = TEXT("ConvoyTelemetryManager");
+	FleetStatus.BodyText = TEXT("Live CV/F1-F4 position and spacing data. See telemetry table below.");
+	FleetStatus.ReceivedMissionTime = MissionTime;
+	FleetStatus.bRequiresAck = false;
+	FleetStatus.bAcknowledged = false;
+	MissionReports.Add(FleetStatus);
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordReportFieldSimple(Brief.ReportID, TEXT("Text"), TEXT("Generated"), Brief.Title, FString(), -1, FString());
+		EventLog->RecordReportFieldSimple(FleetStatus.ReportID, TEXT("FleetTelemetry"), TEXT("Generated"), FleetStatus.Title, FString(), -1, FString());
+	}
+}
+
+int32 UESCROWFleetSubsystem::GetMissionReportCount() const
+{
+	return MissionReports.Num();
+}
+
+bool UESCROWFleetSubsystem::GetMissionReportByIndex(int32 Index, FESCROWMissionReport& OutReport) const
+{
+	if (!MissionReports.IsValidIndex(Index))
+	{
+		return false;
+	}
+
+	OutReport = MissionReports[Index];
+	return true;
+}
+
+bool UESCROWFleetSubsystem::AcknowledgeMissionReport(int32 Index)
+{
+	if (!MissionReports.IsValidIndex(Index))
+	{
+		return false;
+	}
+
+	FESCROWMissionReport& Report = MissionReports[Index];
+	if (!Report.bRequiresAck)
+	{
+		return false;
+	}
+
+	Report.bAcknowledged = true;
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordReportFieldSimple(Report.ReportID, Report.ReportType == EESCROWReportType::Text ? TEXT("Text") : TEXT("FleetTelemetry"), TEXT("Acknowledged"), Report.Title, FString(), -1, FString());
+	}
+
+	return true;
+}

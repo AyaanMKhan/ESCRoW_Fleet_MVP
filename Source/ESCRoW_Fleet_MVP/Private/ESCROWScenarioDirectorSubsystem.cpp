@@ -224,6 +224,11 @@ void UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeReady()
 	ScenarioRuntimeState = EESCROWScenarioRuntimeState::Ready;
 	RuntimeFailureReason.Empty();
 	LogScenarioRuntimeEvent(TEXT("ScenarioRuntimeReady"), GetScenarioRuntimeStateSummary());
+
+	if (UESCROWFleetSubsystem* Fleet = GetFleet())
+	{
+		Fleet->GenerateInitialMissionReports(ScenarioName, CurrentMissionTime);
+	}
 }
 
 void UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeFailed(const FString& Reason)
