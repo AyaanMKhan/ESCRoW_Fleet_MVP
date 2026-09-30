@@ -1,6 +1,15 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "ESCROWFleetSubsystem.h"
+#include "ESCROWEventLogSubsystem.h"
+#include "Engine/World.h"
+#include "Engine/GameInstance.h"
+
+UESCROWEventLogSubsystem* UESCROWFleetSubsystem::GetEventLog() const
+{
+	const UGameInstance* GameInstance = GetWorld() ? GetWorld()->GetGameInstance() : nullptr;
+	return GameInstance ? GameInstance->GetSubsystem<UESCROWEventLogSubsystem>() : nullptr;
+}
 
 void UESCROWFleetSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -156,7 +165,28 @@ bool UESCROWFleetSubsystem::SetRequiresTakeover(int32 FollowerID, bool bRequires
 		return false;
 	}
 
+	const bool bOldValue = Found->bRequiresTakeover;
 	Found->bRequiresTakeover = bRequiresTakeover;
+
+	// The false transition is the "residual warning cleared" moment: bOldValue==true
+	// means the flag was left on after whatever raised it (see RequestTakeover) had
+	// already been resolved elsewhere, so this is a genuine, loggable closeout action
+	// rather than a no-op re-affirmation of an already-clear flag.
+	if (bOldValue != bRequiresTakeover)
+	{
+		if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+		{
+			EventLog->RecordStateTransitionSimple(FString::Printf(TEXT("F%d"), FollowerID), TEXT("Follower"), TEXT("RequiresTakeover"),
+				bOldValue ? TEXT("true") : TEXT("false"), bRequiresTakeover ? TEXT("true") : TEXT("false"), TEXT("FleetSubsystem"), FString());
+
+			if (!bRequiresTakeover)
+			{
+				EventLog->RecordScenarioEventSimple(FString(), TEXT("AlertCleared"),
+					FString::Printf(TEXT("%s residual alert cleared."), *Found->Callsign), FString(), FollowerID, TEXT("Unspecified"), FString());
+			}
+		}
+	}
+
 	return true;
 }
 
@@ -257,6 +287,12 @@ bool UESCROWFleetSubsystem::RequestTakeover(int32 FollowerID)
 
 	AddHUDMessage(EESCROWMessageSource::System, EESCROWMessageSeverity::Warning, FollowerID, FString::Printf(TEXT("Takeover requested for %s."), *Found->Callsign));
 
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(FString(), TEXT("TakeoverRequested"),
+			FString::Printf(TEXT("Takeover requested for %s."), *Found->Callsign), FString(), FollowerID, TEXT("Unspecified"), FString());
+	}
+
 	return true;
 }
 
@@ -273,12 +309,25 @@ bool UESCROWFleetSubsystem::AcquireTakeoverLock(int32 FollowerID)
 		return false;
 	}
 
+	const UEnum* AutonomyEnum = StaticEnum<EESCROWAutonomyMode>();
+	const FString OldAutonomyStr = AutonomyEnum ? AutonomyEnum->GetNameStringByValue(static_cast<int64>(Found->AutonomyMode)) : FString();
+
 	bTakeoverActive = true;
 	ActiveTakeoverFollowerID = FollowerID;
 	Found->CurrentState = EESCROWFollowerState::DirectControl;
 	Found->AutonomyMode = EESCROWAutonomyMode::DirectControl;
 
 	AddHUDMessage(EESCROWMessageSource::System, EESCROWMessageSeverity::Warning, FollowerID, FString::Printf(TEXT("Takeover lock acquired for %s."), *Found->Callsign));
+
+	TakeoverStartWorldSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(FString(), TEXT("TakeoverAcquired"),
+			FString::Printf(TEXT("Takeover lock acquired for %s (direct control)."), *Found->Callsign), FString(), FollowerID, TEXT("Unspecified"), FString());
+		EventLog->RecordStateTransitionSimple(FString::Printf(TEXT("F%d"), FollowerID), TEXT("Follower"), TEXT("AutonomyMode"),
+			OldAutonomyStr, TEXT("DirectControl"), TEXT("FleetSubsystem"), FString());
+	}
 
 	return true;
 }
@@ -301,6 +350,17 @@ bool UESCROWFleetSubsystem::ReleaseTakeoverLock(int32 FollowerID)
 		Found->AutonomyMode = EESCROWAutonomyMode::ReturningToAutonomy;
 
 		AddHUDMessage(EESCROWMessageSource::System, EESCROWMessageSeverity::Info, FollowerID, FString::Printf(TEXT("Takeover lock released for %s."), *Found->Callsign));
+
+		const double DurationSeconds = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0) - TakeoverStartWorldSeconds;
+
+		if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+		{
+			EventLog->RecordScenarioEventSimple(FString(), TEXT("TakeoverReleased"),
+				FString::Printf(TEXT("Takeover lock released for %s; returning to autonomy."), *Found->Callsign), FString(), FollowerID, TEXT("Unspecified"),
+				FString::Printf(TEXT("{\"ControlDurationSeconds\":%.2f}"), DurationSeconds));
+			EventLog->RecordStateTransitionSimple(FString::Printf(TEXT("F%d"), FollowerID), TEXT("Follower"), TEXT("AutonomyMode"),
+				TEXT("DirectControl"), TEXT("ReturningToAutonomy"), TEXT("FleetSubsystem"), FString());
+		}
 	}
 
 	return true;
@@ -308,12 +368,31 @@ bool UESCROWFleetSubsystem::ReleaseTakeoverLock(int32 FollowerID)
 
 void UESCROWFleetSubsystem::ClearTransientAlerts()
 {
+	TArray<int32> ClearedFollowerIDs;
 	for (FESCROWFollowerStatus& Status : FollowerStatuses)
 	{
+		if (Status.bRequiresTakeover)
+		{
+			ClearedFollowerIDs.Add(Status.FollowerID);
+		}
 		Status.bRequiresTakeover = false;
 	}
 
 	AddHUDMessage(EESCROWMessageSource::System, EESCROWMessageSeverity::Info, 0, TEXT("Transient alerts cleared."));
+
+	if (ClearedFollowerIDs.Num() > 0)
+	{
+		if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+		{
+			TArray<FString> IDStrings;
+			for (int32 ID : ClearedFollowerIDs)
+			{
+				IDStrings.Add(FString::Printf(TEXT("F%d"), ID));
+			}
+			EventLog->RecordScenarioEventSimple(FString(), TEXT("AllAlertsCleared"),
+				FString::Printf(TEXT("All follower alerts cleared (%s)."), *FString::Join(IDStrings, TEXT(", "))), FString(), 0, TEXT("Unspecified"), FString());
+		}
+	}
 }
 
 bool UESCROWFleetSubsystem::CanSetFollowerFollowTarget(int32 FollowerID, int32 TargetID) const

@@ -12,6 +12,7 @@
 #include "HAL/PlatformFilemanager.h"
 #include "HAL/PlatformProcess.h"
 #include "TimerManager.h"
+#include "ChaosVehicleMovementComponent.h"
 
 void UESCROWEventLogSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -456,7 +457,11 @@ bool UESCROWEventLogSubsystem::BeginRunFromConfig(const FESCROWRunConfig& Config
 	}
 
 	CurrentRunID = Config.RunID.IsEmpty() ? FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")) : Config.RunID;
-	CurrentRunRootDirectory = FPaths::Combine(FString(FPlatformProcess::UserDir()), TEXT("ESCRoW_Data"));
+	// FPlatformProcess::UserDir() resolves FOLDERID_Documents, which Windows
+	// Known Folder Move can redirect into OneDrive. UserHomeDir() resolves
+	// FOLDERID_Profile (the real local C:/Users/<user>/ root), which is never
+	// redirected, so appending "Documents" here always lands on local disk.
+	CurrentRunRootDirectory = FPaths::Combine(FString(FPlatformProcess::UserHomeDir()), TEXT("Documents"), TEXT("ESCRoW_Data"));
 	CurrentRunFolder = CurrentRunRootDirectory / CurrentRunID;
 
 	ScenarioEventCount = 0;
@@ -955,13 +960,13 @@ FString UESCROWEventLogSubsystem::FormatLocation(const FVector& Location)
 	return FString::Printf(TEXT("%.1f,%.1f,%.1f"), Location.X, Location.Y, Location.Z);
 }
 
-bool UESCROWEventLogSubsystem::TryGetCommandVehicleLocation(FVector& OutLocation) const
+AActor* UESCROWEventLogSubsystem::FindCommandVehicleActor() const
 {
 	const UWorld* World = GetWorld();
 	const UESCROWFleetSubsystem* Fleet = World ? World->GetSubsystem<UESCROWFleetSubsystem>() : nullptr;
 	if (!Fleet)
 	{
-		return false;
+		return nullptr;
 	}
 
 	// There is no direct command-vehicle actor reference on UESCROWFleetSubsystem.
@@ -972,12 +977,62 @@ bool UESCROWEventLogSubsystem::TryGetCommandVehicleLocation(FVector& OutLocation
 	{
 		if (Status.CurrentFollowTargetID == 0 && IsValid(Status.FollowTargetActorRef))
 		{
-			OutLocation = Status.FollowTargetActorRef->GetActorLocation();
-			return true;
+			return Status.FollowTargetActorRef;
 		}
 	}
 
-	return false;
+	return nullptr;
+}
+
+bool UESCROWEventLogSubsystem::TryGetCommandVehicleLocation(FVector& OutLocation) const
+{
+	AActor* CV = FindCommandVehicleActor();
+	if (!CV)
+	{
+		return false;
+	}
+
+	OutLocation = CV->GetActorLocation();
+	return true;
+}
+
+FString UESCROWEventLogSubsystem::BuildVehicleControlJson(AActor* VehicleActor)
+{
+	UChaosVehicleMovementComponent* Movement = IsValid(VehicleActor) ? VehicleActor->FindComponentByClass<UChaosVehicleMovementComponent>() : nullptr;
+	if (!Movement)
+	{
+		return TEXT("null");
+	}
+
+	return FString::Printf(TEXT("{\"Throttle\":%.3f,\"Steering\":%.3f,\"Brake\":%.3f,\"Handbrake\":%s}"),
+		Movement->GetThrottleInput(), Movement->GetSteeringInput(), Movement->GetBrakeInput(),
+		Movement->GetHandbrakeInput() ? TEXT("true") : TEXT("false"));
+}
+
+void UESCROWEventLogSubsystem::CheckCommandVehicleDriveInputEdge(AActor* VehicleActor) const
+{
+	UChaosVehicleMovementComponent* Movement = IsValid(VehicleActor) ? VehicleActor->FindComponentByClass<UChaosVehicleMovementComponent>() : nullptr;
+	if (!Movement)
+	{
+		return;
+	}
+
+	constexpr float DriveInputDeadzone = 0.05f;
+	const bool bIsActive = (FMath::Abs(Movement->GetThrottleInput()) > DriveInputDeadzone)
+		|| (FMath::Abs(Movement->GetSteeringInput()) > DriveInputDeadzone)
+		|| (Movement->GetBrakeInput() > DriveInputDeadzone)
+		|| Movement->GetHandbrakeInput();
+
+	if (bIsActive == bCVDriveInputActive)
+	{
+		return;
+	}
+
+	bCVDriveInputActive = bIsActive;
+
+	UESCROWEventLogSubsystem* MutableThis = const_cast<UESCROWEventLogSubsystem*>(this);
+	MutableThis->RecordParticipantActionSimple(bIsActive ? TEXT("DriveInputStarted") : TEXT("DriveInputStopped"),
+		TEXT("VehicleControl"), FString(), 0, 0, TEXT("CV"), FString(), FString());
 }
 
 void UESCROWEventLogSubsystem::PopulateFleetTelemetry(FESCROWHeartbeatRecord& R) const
@@ -985,60 +1040,64 @@ void UESCROWEventLogSubsystem::PopulateFleetTelemetry(FESCROWHeartbeatRecord& R)
 	const UWorld* World = GetWorld();
 	const UESCROWFleetSubsystem* Fleet = World ? World->GetSubsystem<UESCROWFleetSubsystem>() : nullptr;
 
-	FVector CVLoc;
-	if (TryGetCommandVehicleLocation(CVLoc))
+	AActor* CVActor = FindCommandVehicleActor();
+	if (IsValid(CVActor))
 	{
-		R.CVLocation = FormatLocation(CVLoc);
+		R.CVLocation = FormatLocation(CVActor->GetActorLocation());
 	}
+	CheckCommandVehicleDriveInputEdge(CVActor);
 
-	if (!Fleet)
-	{
-		return;
-	}
-
-	// Per-follower mode/readiness/comm/alert go into PayloadJSON as a structured
-	// "FleetTelemetry" object (any caller-supplied PayloadJSON is preserved under
-	// a "Caller" key) rather than as individual CSV columns, to keep the CSV
-	// schema stable if the fleet size ever changes.
+	// Per-follower mode/readiness/comm/alert/control go into PayloadJSON as a
+	// structured "FleetTelemetry" object (any caller-supplied PayloadJSON is
+	// preserved under a "Caller" key) rather than as individual CSV columns, to
+	// keep the CSV schema stable if the fleet size ever changes. CV's driving-input
+	// telemetry (commanded throttle/steering/brake off its UChaosVehicleMovementComponent)
+	// is captured here too, regardless of whether a human or the autonomous default
+	// is in control, so it goes in even on the no-Fleet-subsystem edge case below.
 	TArray<FString> FollowerJsonEntries;
+	FollowerJsonEntries.Add(FString::Printf(TEXT("\"CV\":{\"Control\":%s}"), *BuildVehicleControlJson(CVActor)));
 
-	for (int32 FollowerID = 1; FollowerID <= 4; ++FollowerID)
+	if (Fleet)
 	{
-		FESCROWFollowerStatus Status;
-		const bool bFound = Fleet->GetFollowerStatus(FollowerID, Status);
-
-		FString LocationStr;
-		float SpeedCms = -1.0f;
-		if (bFound && IsValid(Status.ActorRef))
+		for (int32 FollowerID = 1; FollowerID <= 4; ++FollowerID)
 		{
-			LocationStr = FormatLocation(Status.ActorRef->GetActorLocation());
-			SpeedCms = Status.ActorRef->GetVelocity().Size();
-		}
+			FESCROWFollowerStatus Status;
+			const bool bFound = Fleet->GetFollowerStatus(FollowerID, Status);
 
-		switch (FollowerID)
-		{
-		case 1: R.F1Location = LocationStr; R.F1SpeedCms = SpeedCms; break;
-		case 2: R.F2Location = LocationStr; R.F2SpeedCms = SpeedCms; break;
-		case 3: R.F3Location = LocationStr; R.F3SpeedCms = SpeedCms; break;
-		case 4: R.F4Location = LocationStr; R.F4SpeedCms = SpeedCms; break;
-		default: break;
-		}
+			FString LocationStr;
+			float SpeedCms = -1.0f;
+			if (bFound && IsValid(Status.ActorRef))
+			{
+				LocationStr = FormatLocation(Status.ActorRef->GetActorLocation());
+				SpeedCms = Status.ActorRef->GetVelocity().Size();
+			}
 
-		if (bFound)
-		{
-			const UEnum* StateEnum = StaticEnum<EESCROWFollowerState>();
-			const UEnum* AutonomyEnum = StaticEnum<EESCROWAutonomyMode>();
-			const FString ModeStr = StateEnum ? StateEnum->GetNameStringByValue(static_cast<int64>(Status.CurrentState)) : FString();
-			const FString AutonomyStr = AutonomyEnum ? AutonomyEnum->GetNameStringByValue(static_cast<int64>(Status.AutonomyMode)) : FString();
+			switch (FollowerID)
+			{
+			case 1: R.F1Location = LocationStr; R.F1SpeedCms = SpeedCms; break;
+			case 2: R.F2Location = LocationStr; R.F2SpeedCms = SpeedCms; break;
+			case 3: R.F3Location = LocationStr; R.F3SpeedCms = SpeedCms; break;
+			case 4: R.F4Location = LocationStr; R.F4SpeedCms = SpeedCms; break;
+			default: break;
+			}
 
-			FollowerJsonEntries.Add(FString::Printf(
-				TEXT("\"F%d\":{\"Mode\":\"%s\",\"AutonomyMode\":\"%s\",\"Health\":\"%s\",\"Comm\":\"%s\",\"RequiresTakeover\":%s}"),
-				FollowerID, *EscapeJSONField(ModeStr), *EscapeJSONField(AutonomyStr), *EscapeJSONField(Status.HealthStatus),
-				*EscapeJSONField(Status.CommsStatus), Status.bRequiresTakeover ? TEXT("true") : TEXT("false")));
-		}
-		else
-		{
-			FollowerJsonEntries.Add(FString::Printf(TEXT("\"F%d\":\"UNSET\""), FollowerID));
+			if (bFound)
+			{
+				const UEnum* StateEnum = StaticEnum<EESCROWFollowerState>();
+				const UEnum* AutonomyEnum = StaticEnum<EESCROWAutonomyMode>();
+				const FString ModeStr = StateEnum ? StateEnum->GetNameStringByValue(static_cast<int64>(Status.CurrentState)) : FString();
+				const FString AutonomyStr = AutonomyEnum ? AutonomyEnum->GetNameStringByValue(static_cast<int64>(Status.AutonomyMode)) : FString();
+				const FString ControlJson = BuildVehicleControlJson(Status.ActorRef);
+
+				FollowerJsonEntries.Add(FString::Printf(
+					TEXT("\"F%d\":{\"Mode\":\"%s\",\"AutonomyMode\":\"%s\",\"Health\":\"%s\",\"Comm\":\"%s\",\"RequiresTakeover\":%s,\"Control\":%s}"),
+					FollowerID, *EscapeJSONField(ModeStr), *EscapeJSONField(AutonomyStr), *EscapeJSONField(Status.HealthStatus),
+					*EscapeJSONField(Status.CommsStatus), Status.bRequiresTakeover ? TEXT("true") : TEXT("false"), *ControlJson));
+			}
+			else
+			{
+				FollowerJsonEntries.Add(FString::Printf(TEXT("\"F%d\":\"UNSET\""), FollowerID));
+			}
 		}
 	}
 

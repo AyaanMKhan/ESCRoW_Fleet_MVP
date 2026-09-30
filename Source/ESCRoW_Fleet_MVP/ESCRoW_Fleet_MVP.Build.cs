@@ -10,7 +10,11 @@ public class ESCRoW_Fleet_MVP : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] {  });
+		// ChaosVehicles: reads the standard engine UChaosVehicleMovementComponent's
+		// commanded throttle/steering/brake for driving-input telemetry (see
+		// UESCROWEventLogSubsystem::PopulateFleetTelemetry). This is Epic's own
+		// component API, not vendor (DD_Vehicles_Basic) graph logic.
+		PrivateDependencyModuleNames.AddRange(new string[] { "ChaosVehicles" });
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

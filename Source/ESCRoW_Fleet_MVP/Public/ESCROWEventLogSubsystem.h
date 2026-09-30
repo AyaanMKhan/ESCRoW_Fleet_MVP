@@ -273,8 +273,32 @@ private:
 	// FollowTargetActorRef. Returns false if no such reference is currently known.
 	bool TryGetCommandVehicleLocation(FVector& OutLocation) const;
 
+	// Shared lookup behind TryGetCommandVehicleLocation and the driving-input
+	// telemetry below. Returns nullptr if no follower currently follows the CV.
+	AActor* FindCommandVehicleActor() const;
+
+	// Driving-input telemetry: reads the standard engine UChaosVehicleMovementComponent
+	// (not vendor DD_Vehicles_Basic graph logic) off VehicleActor and returns a JSON
+	// fragment {"Throttle":..,"Steering":..,"Brake":..,"Handbrake":..}, or the JSON
+	// literal null if VehicleActor has no such component. Captures the commanded
+	// control values regardless of whether a human or NavMeshVehicleAI is driving.
+	static FString BuildVehicleControlJson(AActor* VehicleActor);
+
+	// Discrete "keystroke-equivalent" driving-input telemetry for the human-driven
+	// command vehicle (Vehicle-Control Role = Driving). Compares the CV's commanded
+	// throttle/steering/brake/handbrake against a small deadzone and, on a rising or
+	// falling edge, logs a DriveInputStarted/DriveInputStopped participant action.
+	// Not applied to F1-F4: their driving is NavMeshVehicleAI, not a participant
+	// keystroke, and their decision-level state is already captured every heartbeat
+	// via CurrentState/AutonomyMode in PopulateFleetTelemetry.
+	void CheckCommandVehicleDriveInputEdge(AActor* VehicleActor) const;
+
 	static FString FormatLocation(const FVector& Location);
 
 	int32 RunConfigCounterForRecordIDs = 0;
 	FTimerHandle HeartbeatTimerHandle;
+
+	// Bookkeeping for CheckCommandVehicleDriveInputEdge. Mutable because
+	// PopulateFleetTelemetry (its caller) is const; this is not authoritative state.
+	mutable bool bCVDriveInputActive = false;
 };

@@ -136,4 +136,15 @@ private:
 	FString GenerateCommandID();
 
 	void AddHUDMessage(EESCROWMessageSource Source, EESCROWMessageSeverity Severity, int32 TargetFollowerID, const FString& MessageText, bool bRequiresAcknowledgement = false);
+
+	// Mirrors UESCROWScenarioDirectorSubsystem::GetEventLog(): looks up the
+	// per-GameInstance EventLog subsystem. Forward-declared to avoid a header
+	// dependency; full include is in the .cpp only.
+	class UESCROWEventLogSubsystem* GetEventLog() const;
+
+	// World time (GetWorld()->GetTimeSeconds()) at the moment AcquireTakeoverLock
+	// succeeded, used to compute control duration when ReleaseTakeoverLock fires.
+	// Only one takeover can be active at a time (bTakeoverActive/ActiveTakeoverFollowerID
+	// are single-slot), so a single scalar is sufficient.
+	double TakeoverStartWorldSeconds = 0.0;
 };
