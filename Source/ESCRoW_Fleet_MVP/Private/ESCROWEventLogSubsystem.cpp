@@ -430,14 +430,28 @@ FString UESCROWEventLogSubsystem::BuildRunConfigJSON(const FESCROWRunConfig& Con
 	return FString::Join(Lines, TEXT("\n"));
 }
 
-FString UESCROWEventLogSubsystem::BuildRunSummaryJSON() const
+FString UESCROWEventLogSubsystem::BuildRunSummaryJSON(const FString& ExportMode, const FString& Reason) const
 {
+	const FString NowIso = FDateTime::Now().ToIso8601();
+
 	TArray<FString> Lines;
 	Lines.Add(TEXT("{"));
 	Lines.Add(FString::Printf(TEXT("  \"RunID\": \"%s\","), *EscapeJSONField(CurrentRunID)));
 	Lines.Add(FString::Printf(TEXT("  \"RunFolder\": \"%s\","), *EscapeJSONField(CurrentRunFolder)));
 	Lines.Add(FString::Printf(TEXT("  \"bRunActive\": %s,"), bRunActive ? TEXT("true") : TEXT("false")));
-	Lines.Add(FString::Printf(TEXT("  \"GeneratedAt\": \"%s\","), *FDateTime::Now().ToIso8601()));
+	Lines.Add(FString::Printf(TEXT("  \"ExportMode\": \"%s\","), *EscapeJSONField(ExportMode)));
+	Lines.Add(FString::Printf(TEXT("  \"Reason\": \"%s\","), *EscapeJSONField(Reason)));
+	Lines.Add(FString::Printf(TEXT("  \"GeneratedAt\": \"%s\","), *NowIso));
+
+	if (ExportMode == TEXT("Checkpoint"))
+	{
+		Lines.Add(FString::Printf(TEXT("  \"LastCheckpointAt\": \"%s\","), *NowIso));
+	}
+	else if (ExportMode == TEXT("Final"))
+	{
+		Lines.Add(FString::Printf(TEXT("  \"EndedAt\": \"%s\","), *NowIso));
+	}
+
 	Lines.Add(FString::Printf(TEXT("  \"ScenarioEventCount\": %d,"), ScenarioEventCount));
 	Lines.Add(FString::Printf(TEXT("  \"ParticipantActionCount\": %d,"), ParticipantActionCount));
 	Lines.Add(FString::Printf(TEXT("  \"UIExposureCount\": %d,"), UIExposureCount));
@@ -482,6 +496,7 @@ bool UESCROWEventLogSubsystem::BeginRunFromConfig(const FESCROWRunConfig& Config
 
 	WriteSessionManifest(Config);
 	InitializeOutputFiles();
+	StartAutosaveTimer();
 
 	UE_LOG(LogTemp, Log, TEXT("ESCROWEventLogSubsystem: run %s started at %s"), *CurrentRunID, *CurrentRunFolder);
 	return true;
@@ -495,6 +510,7 @@ void UESCROWEventLogSubsystem::EndRun(const FString& EndReason)
 	}
 
 	StopHeartbeat();
+	StopAutosaveTimer();
 	bRunActive = false;
 	FlushAllOutputs();
 
@@ -550,9 +566,9 @@ bool UESCROWEventLogSubsystem::InitializeOutputFiles()
 	bAllOk &= WriteWholeFile(TEXT("state_transitions.csv"), TEXT("RecordID,RunID,TimestampISO,WorldSeconds,ScenarioTimeSeconds,EntityID,EntityType,StateName,OldValue,NewValue,Source,RelatedEventID,SourceObject,EventID,PayloadJSON\r\n"));
 	bAllOk &= WriteWholeFile(TEXT("reports.csv"), TEXT("RecordID,RunID,TimestampISO,WorldSeconds,ScenarioTimeSeconds,ReportID,ReportType,FieldName,FieldValue,GroundTruthValue,Score,SourceSystem,Phase,EventID,PayloadJSON\r\n"));
 
-	bAllOk &= WriteWholeFile(TEXT("run_summary.json"), BuildRunSummaryJSON());
+	bAllOk &= WriteWholeFile(TEXT("run_summary.json"), BuildRunSummaryJSON(TEXT("Initial"), TEXT("RunStart")));
 
-	const FString StatusText = FString::Printf(TEXT("Run created at %s\r\nFolder: %s\r\n"), *FDateTime::Now().ToIso8601(), *CurrentRunFolder);
+	const FString StatusText = FString::Printf(TEXT("ExportMode: Initial\r\nReason: RunStart\r\nbRunActive: true\r\nRun created at %s\r\nFolder: %s\r\n"), *FDateTime::Now().ToIso8601(), *CurrentRunFolder);
 	bAllOk &= WriteWholeFile(TEXT("export_status.txt"), StatusText);
 
 	return bAllOk;
@@ -565,10 +581,43 @@ bool UESCROWEventLogSubsystem::FlushAllOutputs()
 		return false;
 	}
 
-	bool bAllOk = true;
-	bAllOk &= WriteWholeFile(TEXT("run_summary.json"), BuildRunSummaryJSON());
+	// Called both from EndRun (after bRunActive is set false - the real
+	// shutdown flush) and from ExportRunSummary (which may be invoked
+	// mid-run). Infer mode/reason from the current bRunActive state rather
+	// than adding a parameter, so both existing call sites keep working
+	// unchanged.
+	const FString Mode = bRunActive ? TEXT("InProgress") : TEXT("Final");
+	const FString Reason = bRunActive ? TEXT("ManualExport") : TEXT("Shutdown");
 
-	const FString StatusText = FString::Printf(TEXT("Last flushed at %s\r\nFolder: %s\r\nActive: %s\r\n"), *FDateTime::Now().ToIso8601(), *CurrentRunFolder, bRunActive ? TEXT("true") : TEXT("false"));
+	bool bAllOk = true;
+	bAllOk &= WriteWholeFile(TEXT("run_summary.json"), BuildRunSummaryJSON(Mode, Reason));
+
+	const FString StatusText = FString::Printf(
+		TEXT("ExportMode: %s\r\nReason: %s\r\nbRunActive: %s\r\nLast flushed at %s\r\nFolder: %s\r\n"),
+		*Mode, *Reason, bRunActive ? TEXT("true") : TEXT("false"), *FDateTime::Now().ToIso8601(), *CurrentRunFolder);
+	bAllOk &= WriteWholeFile(TEXT("export_status.txt"), StatusText);
+
+	return bAllOk;
+}
+
+bool UESCROWEventLogSubsystem::CheckpointFlush()
+{
+	if (!bRunActive || CurrentRunFolder.IsEmpty())
+	{
+		return false;
+	}
+
+	// Deliberately mirrors FlushAllOutputs' two whole-file rewrites only.
+	// Never touches bRunActive, never clears EventEntries/counts, never
+	// creates a new run folder, and never appends to the per-record
+	// CSV/JSONL files (those are already flushed immediately per record by
+	// the Record* functions), so repeated ticks cannot duplicate rows.
+	bool bAllOk = true;
+	bAllOk &= WriteWholeFile(TEXT("run_summary.json"), BuildRunSummaryJSON(TEXT("Checkpoint"), TEXT("AutosaveTimer")));
+
+	const FString StatusText = FString::Printf(
+		TEXT("ExportMode: Checkpoint\r\nReason: AutosaveTimer\r\nbRunActive: true\r\nLastCheckpointAt: %s\r\nFolder: %s\r\nScenarioEventCount: %d\r\nParticipantActionCount: %d\r\nUIExposureCount: %d\r\nHeartbeatCount: %d\r\nStateTransitionCount: %d\r\nReportRecordCount: %d\r\n"),
+		*FDateTime::Now().ToIso8601(), *CurrentRunFolder, ScenarioEventCount, ParticipantActionCount, UIExposureCount, HeartbeatCount, StateTransitionCount, ReportRecordCount);
 	bAllOk &= WriteWholeFile(TEXT("export_status.txt"), StatusText);
 
 	return bAllOk;
@@ -951,6 +1000,38 @@ bool UESCROWEventLogSubsystem::RecordHeartbeatNow()
 void UESCROWEventLogSubsystem::HeartbeatTimerTick()
 {
 	RecordHeartbeatNow();
+}
+
+// =============================== Checkpoint/autosave ===============================
+
+void UESCROWEventLogSubsystem::StartAutosaveTimer()
+{
+	bAutosaveEnabled = true;
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ESCROWEventLogSubsystem::StartAutosaveTimer: no World available; autosave timer not started."));
+		return;
+	}
+
+	World->GetTimerManager().ClearTimer(AutosaveTimerHandle);
+	World->GetTimerManager().SetTimer(AutosaveTimerHandle, this, &UESCROWEventLogSubsystem::AutosaveTimerTick, FMath::Max(AutosaveIntervalSeconds, 1.0f), true);
+}
+
+void UESCROWEventLogSubsystem::StopAutosaveTimer()
+{
+	bAutosaveEnabled = false;
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(AutosaveTimerHandle);
+	}
+}
+
+void UESCROWEventLogSubsystem::AutosaveTimerTick()
+{
+	CheckpointFlush();
 }
 
 // =============================== RA41B: fleet telemetry for heartbeat ===============================

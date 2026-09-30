@@ -76,6 +76,18 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
 	bool bHeartbeatEnabled = false;
 
+	// Periodic checkpoint/autosave: re-writes run_summary.json/export_status.txt
+	// (current counts, bRunActive still true) every AutosaveIntervalSeconds while
+	// a run is active, so a crash or forced exit does not lose all buffered
+	// state. The dedicated per-record CSV/JSONL files (event_log_raw.jsonl,
+	// scenario_events.jsonl, etc.) are already appended to immediately per
+	// record elsewhere and need no periodic flush of their own.
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	float AutosaveIntervalSeconds = 10.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
+	bool bAutosaveEnabled = false;
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|EventLog")
 	void ResetLog();
 
@@ -244,6 +256,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
 	bool RecordHeartbeatNow();
 
+	// --- Checkpoint/autosave ---
+
+	// Starts the repeating AutosaveIntervalSeconds timer. Safe to call again
+	// while already running (restarts with the current interval). No-ops with
+	// a warning if no World is available yet.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	void StartAutosaveTimer();
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	void StopAutosaveTimer();
+
+	// Re-writes run_summary.json/export_status.txt only (ExportMode=Checkpoint,
+	// Reason=AutosaveTimer). Never touches bRunActive, never clears in-memory
+	// buffers or counts, never creates a new run folder, and never appends to
+	// or truncates the per-record CSV/JSONL files (those are already flushed
+	// immediately per record). No-ops (returns false) if no run is active.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool CheckpointFlush();
+
 private:
 	FString BuildTimestampString() const;
 
@@ -253,12 +284,18 @@ private:
 	// RA41A helpers
 	static FString EscapeJSONStringManual(const FString& Field);
 	FString BuildRunConfigJSON(const FESCROWRunConfig& Config) const;
-	FString BuildRunSummaryJSON() const;
+
+	// ExportMode: "Initial" | "InProgress" | "Checkpoint" | "Final".
+	// Reason: e.g. "RunStart" | "ManualExport" | "AutosaveTimer" | "Shutdown".
+	// Adds "LastCheckpointAt" when ExportMode=="Checkpoint" and "EndedAt" when
+	// ExportMode=="Final"; both are informational only, not used for dedup.
+	FString BuildRunSummaryJSON(const FString& ExportMode, const FString& Reason) const;
 	FString NextRecordID(const TCHAR* Prefix);
 	bool AppendLineToFile(const FString& FileName, const FString& Line) const;
 	bool WriteWholeFile(const FString& FileName, const FString& Content) const;
 	FString GetCurrentPhaseFromScenarioDirector() const;
 	void HeartbeatTimerTick();
+	void AutosaveTimerTick();
 
 	// RA41B: fills CVLocation/F1-F4 Location/SpeedCms from UESCROWFleetSubsystem and
 	// merges per-follower mode/readiness/comm/alert into R.PayloadJSON as a
@@ -297,6 +334,7 @@ private:
 
 	int32 RunConfigCounterForRecordIDs = 0;
 	FTimerHandle HeartbeatTimerHandle;
+	FTimerHandle AutosaveTimerHandle;
 
 	// Bookkeeping for CheckCommandVehicleDriveInputEdge. Mutable because
 	// PopulateFleetTelemetry (its caller) is const; this is not authoritative state.
