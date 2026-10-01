@@ -117,7 +117,21 @@ bool UESCROWFleetSubsystem::SetFollowerState(int32 FollowerID, EESCROWFollowerSt
 		return false;
 	}
 
+	const EESCROWFollowerState OldState = Found->CurrentState;
 	Found->CurrentState = NewState;
+
+	if (OldState != NewState)
+	{
+		if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+		{
+			const UEnum* StateEnum = StaticEnum<EESCROWFollowerState>();
+			const FString OldValue = StateEnum ? StateEnum->GetNameStringByValue(static_cast<int64>(OldState)) : FString();
+			const FString NewValue = StateEnum ? StateEnum->GetNameStringByValue(static_cast<int64>(NewState)) : FString();
+			EventLog->RecordStateTransitionSimple(FString::Printf(TEXT("F%d"), FollowerID), TEXT("Follower"), TEXT("CurrentState"),
+				OldValue, NewValue, TEXT("FleetSubsystem"), FString());
+		}
+	}
+
 	return true;
 }
 
@@ -234,6 +248,16 @@ FESCROWFleetCommand UESCROWFleetSubsystem::QueueFleetCommand(int32 TargetFollowe
 
 	PendingCommands.Add(NewCommand);
 
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		const UEnum* CommandTypeEnum = StaticEnum<EESCROWCommandType>();
+		const UEnum* ActionTypeEnum = StaticEnum<EESCROWActionType>();
+		const FString CommandTypeStr = CommandTypeEnum ? CommandTypeEnum->GetNameStringByValue(static_cast<int64>(CommandType)) : FString();
+		const FString ActionTypeStr = ActionTypeEnum ? ActionTypeEnum->GetNameStringByValue(static_cast<int64>(ActionType)) : FString();
+		const FString PayloadJSON = FString::Printf(TEXT("{\"CommandType\":\"%s\",\"ActionType\":\"%s\"}"), *CommandTypeStr, *ActionTypeStr);
+		EventLog->RecordScenarioEventSimple(FString(), TEXT("CommandQueued"), CommandText, NewCommand.CommandID, TargetFollowerID, TEXT("Unspecified"), PayloadJSON);
+	}
+
 	return NewCommand;
 }
 
@@ -256,6 +280,11 @@ bool UESCROWFleetSubsystem::MarkCommandComplete(const FString& CommandID)
 	CompletedCommands.Add(Completed);
 
 	AddHUDMessage(EESCROWMessageSource::System, EESCROWMessageSeverity::Info, Completed.TargetFollowerID, FString::Printf(TEXT("Command %s complete."), *CommandID));
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordScenarioEventSimple(FString(), TEXT("CommandCompleted"), Completed.CommandText, Completed.CommandID, Completed.TargetFollowerID, TEXT("Unspecified"), FString());
+	}
 
 	return true;
 }
@@ -530,6 +559,21 @@ void UESCROWFleetSubsystem::AddHUDMessage(EESCROWMessageSource Source, EESCROWMe
 	while (HUDMessages.Num() > 100)
 	{
 		HUDMessages.RemoveAt(0);
+	}
+
+	// HUDMessages above is the ephemeral in-session feed (capped, not persisted).
+	// Mirror every message to the durable structured log too, so the operator
+	// message feed is reconstructable after the fact even though the in-memory
+	// array itself is not saved to disk.
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		const UEnum* SourceEnum = StaticEnum<EESCROWMessageSource>();
+		const UEnum* SeverityEnum = StaticEnum<EESCROWMessageSeverity>();
+		const FString SourceStr = SourceEnum ? SourceEnum->GetNameStringByValue(static_cast<int64>(Source)) : FString();
+		const FString SeverityStr = SeverityEnum ? SeverityEnum->GetNameStringByValue(static_cast<int64>(Severity)) : FString();
+		const FString PayloadJSON = FString::Printf(TEXT("{\"Source\":\"%s\",\"Severity\":\"%s\",\"RequiresAck\":%s,\"MessageID\":\"%s\"}"),
+			*SourceStr, *SeverityStr, bRequiresAcknowledgement ? TEXT("true") : TEXT("false"), *NewMessage.MessageID);
+		EventLog->RecordScenarioEventSimple(FString(), TEXT("HUDMessage"), MessageText, FString(), TargetFollowerID, TEXT("Unspecified"), PayloadJSON);
 	}
 }
 
