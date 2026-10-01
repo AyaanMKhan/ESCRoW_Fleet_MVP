@@ -681,6 +681,16 @@ bool UESCROWEventLogSubsystem::RecordScenarioEventSimple(const FString& Phase, c
 	return RecordScenarioEvent(R);
 }
 
+bool UESCROWEventLogSubsystem::RecordVehicleCollisionSimple(int32 VehicleFollowerID, const FString& OtherActorName, float VehicleSpeedCms, bool bOtherIsVehicle)
+{
+	const FString VehicleID = VehicleFollowerID == 0 ? TEXT("CV") : FString::Printf(TEXT("F%d"), VehicleFollowerID);
+	const FString EventLabel = FString::Printf(TEXT("%s collided with %s"), *VehicleID, *OtherActorName);
+	const FString PayloadJSON = FString::Printf(
+		TEXT("{\"VehicleID\":\"%s\",\"OtherActorName\":\"%s\",\"VehicleSpeedCms\":%.2f,\"bOtherIsVehicle\":%s}"),
+		*EscapeJSONField(VehicleID), *EscapeJSONField(OtherActorName), VehicleSpeedCms, bOtherIsVehicle ? TEXT("true") : TEXT("false"));
+	return RecordScenarioEventSimple(FString(), TEXT("VehicleCollision"), EventLabel, FString(), VehicleFollowerID, TEXT("Unspecified"), PayloadJSON);
+}
+
 bool UESCROWEventLogSubsystem::RecordParticipantAction(const FESCROWParticipantActionRecord& Record)
 {
 	if (!bRunActive)

@@ -203,6 +203,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
 	bool RecordScenarioEventSimple(const FString& Phase, const FString& EventType, const FString& EventLabel, const FString& TaskingID, int32 AffectedFollowerID, const FString& PlanValidity, const FString& PayloadJSON);
 
+	// Convenience wrapper for vehicle-wrapper Blueprints handling "Event Hit": builds
+	// EventLabel/PayloadJSON from plain data (no AActor* params, matching the other
+	// *Simple wrappers) and records it as a "VehicleCollision" scenario event.
+	// VehicleFollowerID: 0 for the command vehicle, 1-4 for a follower.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordVehicleCollisionSimple(int32 VehicleFollowerID, const FString& OtherActorName, float VehicleSpeedCms, bool bOtherIsVehicle);
+
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
 	bool RecordParticipantAction(const FESCROWParticipantActionRecord& Record);
 
