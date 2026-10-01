@@ -7,6 +7,41 @@
 #include "ESCROWTypes.h"
 #include "ESCROWEventLogSubsystem.generated.h"
 
+// Plain (non-UPROPERTY) internal state, not reflected - these never cross the
+// Blueprint boundary, only the *Simple logging functions that use them do.
+
+// One open "vehicle is in continuous contact with object X" episode, keyed by
+// VehicleID+OtherActorName. Debounces Event Hit firing every physics substep
+// during sustained contact into a single Start/End pair instead of one log
+// row per tick.
+struct FESCROWCollisionEpisodeState
+{
+	FString VehicleID;
+	FString OtherActorName;
+	bool bOtherIsVehicle = false;
+	int32 VehicleFollowerID = 0;
+	float StartWorldSeconds = 0.0f;
+	float LastHitWorldSeconds = 0.0f;
+	float StartSpeedCms = 0.0f;
+	float PeakSpeedCms = 0.0f;
+	float LastSpeedCms = 0.0f;
+	int32 HitCount = 0;
+	FString StartEventID;
+};
+
+// The single top-level HUD page (and, for REPORTS, report) currently being
+// dwelled on. Only one can be active at a time (single operator, single
+// focus), so this is a flat optional rather than a map.
+struct FESCROWPageDwellState
+{
+	bool bActive = false;
+	FString PageName;
+	int32 SelectedFollowerID = 0;
+	FString ReportID;
+	float StartWorldSeconds = 0.0f;
+	FString StartEventID;
+};
+
 /**
  * Central structured event log store, in memory for now, formatted for later
  * CSV/JSONL export. Actual file writing is a later RA pass.
@@ -205,10 +240,26 @@ public:
 
 	// Convenience wrapper for vehicle-wrapper Blueprints handling "Event Hit": builds
 	// EventLabel/PayloadJSON from plain data (no AActor* params, matching the other
-	// *Simple wrappers) and records it as a "VehicleCollision" scenario event.
+	// *Simple wrappers). Debounces sustained contact (Event Hit fires every physics
+	// substep while two bodies stay touching) into one "VehicleCollisionStart" record
+	// on first contact and one "VehicleCollisionEnd" record (with Duration/HitCount/
+	// PeakSpeedCms) once no further hit against the same actor arrives for
+	// CollisionEpisodeCooldownSeconds, instead of one row per tick.
 	// VehicleFollowerID: 0 for the command vehicle, 1-4 for a follower.
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
 	bool RecordVehicleCollisionSimple(int32 VehicleFollowerID, const FString& OtherActorName, float VehicleSpeedCms, bool bOtherIsVehicle);
+
+	// Call whenever the HUD's active top-level page changes (including a
+	// different report becoming visible on the REPORTS page without leaving
+	// it), or with an empty PageName when the whole console/HUD is hidden.
+	// Emits "PageDwellEnd" (Duration, RelatedEventID back to its Start) for
+	// whatever page/report was previously being dwelled on, then - if
+	// PageName is non-empty - "PageDwellStart" for the new one. ReportID is
+	// only meaningful when PageName=="REPORTS"; pass empty otherwise. This is
+	// how both generic top-page navigation and per-report viewing time (did
+	// they plausibly read it, not just glance at it) get reconstructed.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
+	bool RecordPageDwellSimple(const FString& PageName, int32 SelectedFollowerID, const FString& ReportID);
 
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|DataManager")
 	bool RecordParticipantAction(const FESCROWParticipantActionRecord& Record);
@@ -303,6 +354,21 @@ private:
 	FString GetCurrentPhaseFromScenarioDirector() const;
 	void HeartbeatTimerTick();
 	void AutosaveTimerTick();
+
+	// Collision-episode debounce (see RecordVehicleCollisionSimple).
+	static constexpr float CollisionEpisodeCooldownSeconds = 0.5f;
+	static constexpr float CollisionEpisodeCheckIntervalSeconds = 0.25f;
+	void StartCollisionEpisodeTimerIfNeeded();
+	void CollisionEpisodeTimerTick();
+	void EmitCollisionEpisodeEnd(const FESCROWCollisionEpisodeState& Episode);
+	void FlushOpenCollisionEpisodes();
+	TMap<FString, FESCROWCollisionEpisodeState> ActiveCollisionEpisodes;
+	FTimerHandle CollisionEpisodeTimerHandle;
+
+	// Page-dwell tracking (see RecordPageDwellSimple).
+	void EmitPageDwellEnd(const FESCROWPageDwellState& Dwell, const FString& EndReason);
+	void FlushOpenPageDwell(const FString& EndReason);
+	FESCROWPageDwellState CurrentPageDwell;
 
 	// RA41B: fills CVLocation/F1-F4 Location/SpeedCms from UESCROWFleetSubsystem and
 	// merges per-follower mode/readiness/comm/alert into R.PayloadJSON as a

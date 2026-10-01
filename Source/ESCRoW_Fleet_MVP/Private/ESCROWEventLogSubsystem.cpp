@@ -511,6 +511,8 @@ void UESCROWEventLogSubsystem::EndRun(const FString& EndReason)
 
 	StopHeartbeat();
 	StopAutosaveTimer();
+	FlushOpenCollisionEpisodes();
+	FlushOpenPageDwell(TEXT("RunEnded"));
 	bRunActive = false;
 	FlushAllOutputs();
 
@@ -683,12 +685,209 @@ bool UESCROWEventLogSubsystem::RecordScenarioEventSimple(const FString& Phase, c
 
 bool UESCROWEventLogSubsystem::RecordVehicleCollisionSimple(int32 VehicleFollowerID, const FString& OtherActorName, float VehicleSpeedCms, bool bOtherIsVehicle)
 {
+	if (!bRunActive)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ESCROWEventLogSubsystem::RecordVehicleCollisionSimple called with no active run; dropped."));
+		return false;
+	}
+
 	const FString VehicleID = VehicleFollowerID == 0 ? TEXT("CV") : FString::Printf(TEXT("F%d"), VehicleFollowerID);
-	const FString EventLabel = FString::Printf(TEXT("%s collided with %s"), *VehicleID, *OtherActorName);
-	const FString PayloadJSON = FString::Printf(
+	const float NowSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	const FString Key = VehicleID + TEXT("|") + OtherActorName;
+
+	if (FESCROWCollisionEpisodeState* Existing = ActiveCollisionEpisodes.Find(Key))
+	{
+		// Continuing contact (Event Hit re-firing every physics substep): fold
+		// into the open episode instead of logging another row.
+		Existing->LastHitWorldSeconds = NowSeconds;
+		Existing->LastSpeedCms = VehicleSpeedCms;
+		Existing->PeakSpeedCms = FMath::Max(Existing->PeakSpeedCms, VehicleSpeedCms);
+		++Existing->HitCount;
+		return true;
+	}
+
+	FESCROWCollisionEpisodeState NewEpisode;
+	NewEpisode.VehicleID = VehicleID;
+	NewEpisode.OtherActorName = OtherActorName;
+	NewEpisode.bOtherIsVehicle = bOtherIsVehicle;
+	NewEpisode.VehicleFollowerID = VehicleFollowerID;
+	NewEpisode.StartWorldSeconds = NowSeconds;
+	NewEpisode.LastHitWorldSeconds = NowSeconds;
+	NewEpisode.StartSpeedCms = VehicleSpeedCms;
+	NewEpisode.PeakSpeedCms = VehicleSpeedCms;
+	NewEpisode.LastSpeedCms = VehicleSpeedCms;
+	NewEpisode.HitCount = 1;
+	NewEpisode.StartEventID = NextRecordID(TEXT("SE"));
+
+	FESCROWScenarioEventRecord R;
+	R.RecordID = NewEpisode.StartEventID;
+	R.EventID = NewEpisode.StartEventID;
+	R.EventType = TEXT("VehicleCollisionStart");
+	R.EventLabel = FString::Printf(TEXT("%s collided with %s"), *VehicleID, *OtherActorName);
+	R.AffectedFollowerID = VehicleFollowerID;
+	R.PlanValidity = TEXT("Unspecified");
+	R.PayloadJSON = FString::Printf(
 		TEXT("{\"VehicleID\":\"%s\",\"OtherActorName\":\"%s\",\"VehicleSpeedCms\":%.2f,\"bOtherIsVehicle\":%s}"),
 		*EscapeJSONField(VehicleID), *EscapeJSONField(OtherActorName), VehicleSpeedCms, bOtherIsVehicle ? TEXT("true") : TEXT("false"));
-	return RecordScenarioEventSimple(FString(), TEXT("VehicleCollision"), EventLabel, FString(), VehicleFollowerID, TEXT("Unspecified"), PayloadJSON);
+	RecordScenarioEvent(R);
+
+	ActiveCollisionEpisodes.Add(Key, NewEpisode);
+	StartCollisionEpisodeTimerIfNeeded();
+	return true;
+}
+
+void UESCROWEventLogSubsystem::StartCollisionEpisodeTimerIfNeeded()
+{
+	UWorld* World = GetWorld();
+	if (!World) { return; }
+	if (!World->GetTimerManager().IsTimerActive(CollisionEpisodeTimerHandle))
+	{
+		World->GetTimerManager().SetTimer(CollisionEpisodeTimerHandle, this, &UESCROWEventLogSubsystem::CollisionEpisodeTimerTick, CollisionEpisodeCheckIntervalSeconds, true);
+	}
+}
+
+void UESCROWEventLogSubsystem::CollisionEpisodeTimerTick()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (ActiveCollisionEpisodes.Num() == 0)
+	{
+		World->GetTimerManager().ClearTimer(CollisionEpisodeTimerHandle);
+		return;
+	}
+
+	const float NowSeconds = World->GetTimeSeconds();
+	TArray<FString> KeysToClose;
+	for (const TPair<FString, FESCROWCollisionEpisodeState>& Pair : ActiveCollisionEpisodes)
+	{
+		if (NowSeconds - Pair.Value.LastHitWorldSeconds >= CollisionEpisodeCooldownSeconds)
+		{
+			KeysToClose.Add(Pair.Key);
+		}
+	}
+	for (const FString& Key : KeysToClose)
+	{
+		EmitCollisionEpisodeEnd(ActiveCollisionEpisodes[Key]);
+		ActiveCollisionEpisodes.Remove(Key);
+	}
+}
+
+void UESCROWEventLogSubsystem::EmitCollisionEpisodeEnd(const FESCROWCollisionEpisodeState& Episode)
+{
+	const float Duration = Episode.LastHitWorldSeconds - Episode.StartWorldSeconds;
+
+	FESCROWScenarioEventRecord R;
+	R.EventType = TEXT("VehicleCollisionEnd");
+	R.EventLabel = FString::Printf(TEXT("%s separated from %s after %.2fs (%d hits, peak %.1f cm/s)"),
+		*Episode.VehicleID, *Episode.OtherActorName, Duration, Episode.HitCount, Episode.PeakSpeedCms);
+	R.AffectedFollowerID = Episode.VehicleFollowerID;
+	R.PlanValidity = TEXT("Unspecified");
+	R.RelatedEventID = Episode.StartEventID;
+	R.PayloadJSON = FString::Printf(
+		TEXT("{\"VehicleID\":\"%s\",\"OtherActorName\":\"%s\",\"bOtherIsVehicle\":%s,\"DurationSeconds\":%.2f,\"HitCount\":%d,\"PeakSpeedCms\":%.2f,\"FinalSpeedCms\":%.2f}"),
+		*EscapeJSONField(Episode.VehicleID), *EscapeJSONField(Episode.OtherActorName), Episode.bOtherIsVehicle ? TEXT("true") : TEXT("false"),
+		Duration, Episode.HitCount, Episode.PeakSpeedCms, Episode.LastSpeedCms);
+	RecordScenarioEvent(R);
+}
+
+void UESCROWEventLogSubsystem::FlushOpenCollisionEpisodes()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(CollisionEpisodeTimerHandle);
+	}
+	for (const TPair<FString, FESCROWCollisionEpisodeState>& Pair : ActiveCollisionEpisodes)
+	{
+		EmitCollisionEpisodeEnd(Pair.Value);
+	}
+	ActiveCollisionEpisodes.Empty();
+}
+
+bool UESCROWEventLogSubsystem::RecordPageDwellSimple(const FString& PageName, int32 SelectedFollowerID, const FString& ReportID)
+{
+	if (!bRunActive)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ESCROWEventLogSubsystem::RecordPageDwellSimple called with no active run; dropped."));
+		return false;
+	}
+
+	// No-op if nothing is actually changing (e.g. re-selecting the same
+	// follower tab, or the same report re-confirmed) - avoids a spurious
+	// zero-duration Start/End pair.
+	if (CurrentPageDwell.bActive && CurrentPageDwell.PageName == PageName
+		&& CurrentPageDwell.SelectedFollowerID == SelectedFollowerID && CurrentPageDwell.ReportID == ReportID)
+	{
+		return true;
+	}
+
+	if (CurrentPageDwell.bActive)
+	{
+		EmitPageDwellEnd(CurrentPageDwell, PageName.IsEmpty() ? TEXT("HUDHidden") : TEXT("PageChanged"));
+		CurrentPageDwell = FESCROWPageDwellState();
+	}
+
+	if (PageName.IsEmpty())
+	{
+		return true;
+	}
+
+	const float NowSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+
+	FESCROWPageDwellState NewDwell;
+	NewDwell.bActive = true;
+	NewDwell.PageName = PageName;
+	NewDwell.SelectedFollowerID = SelectedFollowerID;
+	NewDwell.ReportID = ReportID;
+	NewDwell.StartWorldSeconds = NowSeconds;
+	NewDwell.StartEventID = NextRecordID(TEXT("SE"));
+
+	FESCROWScenarioEventRecord R;
+	R.RecordID = NewDwell.StartEventID;
+	R.EventID = NewDwell.StartEventID;
+	R.EventType = TEXT("PageDwellStart");
+	R.EventLabel = ReportID.IsEmpty()
+		? FString::Printf(TEXT("Viewing %s"), *PageName)
+		: FString::Printf(TEXT("Viewing %s on %s"), *ReportID, *PageName);
+	R.AffectedFollowerID = SelectedFollowerID;
+	R.PlanValidity = TEXT("Unspecified");
+	R.PayloadJSON = FString::Printf(TEXT("{\"PageName\":\"%s\",\"SelectedFollowerID\":%d,\"ReportID\":\"%s\"}"),
+		*EscapeJSONField(PageName), SelectedFollowerID, *EscapeJSONField(ReportID));
+	RecordScenarioEvent(R);
+
+	CurrentPageDwell = NewDwell;
+	return true;
+}
+
+void UESCROWEventLogSubsystem::EmitPageDwellEnd(const FESCROWPageDwellState& Dwell, const FString& EndReason)
+{
+	const float NowSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	const float Duration = NowSeconds - Dwell.StartWorldSeconds;
+
+	FESCROWScenarioEventRecord R;
+	R.EventType = TEXT("PageDwellEnd");
+	R.EventLabel = Dwell.ReportID.IsEmpty()
+		? FString::Printf(TEXT("Left %s after %.2fs"), *Dwell.PageName, Duration)
+		: FString::Printf(TEXT("Left %s on %s after %.2fs"), *Dwell.ReportID, *Dwell.PageName, Duration);
+	R.AffectedFollowerID = Dwell.SelectedFollowerID;
+	R.PlanValidity = TEXT("Unspecified");
+	R.RelatedEventID = Dwell.StartEventID;
+	R.PayloadJSON = FString::Printf(
+		TEXT("{\"PageName\":\"%s\",\"SelectedFollowerID\":%d,\"ReportID\":\"%s\",\"DurationSeconds\":%.2f,\"EndReason\":\"%s\"}"),
+		*EscapeJSONField(Dwell.PageName), Dwell.SelectedFollowerID, *EscapeJSONField(Dwell.ReportID), Duration, *EscapeJSONField(EndReason));
+	RecordScenarioEvent(R);
+}
+
+void UESCROWEventLogSubsystem::FlushOpenPageDwell(const FString& EndReason)
+{
+	if (CurrentPageDwell.bActive)
+	{
+		EmitPageDwellEnd(CurrentPageDwell, EndReason);
+		CurrentPageDwell = FESCROWPageDwellState();
+	}
 }
 
 bool UESCROWEventLogSubsystem::RecordParticipantAction(const FESCROWParticipantActionRecord& Record)
