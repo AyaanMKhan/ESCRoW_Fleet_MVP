@@ -84,4 +84,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|ControlRouter")
 	int32 GetActiveRemoteFollowerID() const;
+
+private:
+	// Mirrors UESCROWFleetSubsystem::GetEventLog(): looks up the per-GameInstance
+	// EventLog subsystem. Forward-declared to avoid a header dependency; full
+	// include is in the .cpp only.
+	class UESCROWEventLogSubsystem* GetEventLog() const;
 };
