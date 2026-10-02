@@ -12,6 +12,7 @@
 #include "HAL/PlatformFilemanager.h"
 #include "HAL/PlatformProcess.h"
 #include "TimerManager.h"
+#include "EngineUtils.h"
 #include "ChaosVehicleMovementComponent.h"
 
 void UESCROWEventLogSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -1268,6 +1269,17 @@ AActor* UESCROWEventLogSubsystem::FindCommandVehicleActor() const
 		if (Status.CurrentFollowTargetID == 0 && IsValid(Status.FollowTargetActorRef))
 		{
 			return Status.FollowTargetActorRef;
+		}
+	}
+
+	// Fallback: the follow-target refs are often unresolved (the Blueprint nav-order
+	// model owns follow targets), which left CVLocation blank. Find the command
+	// vehicle by class name instead.
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (IsValid(*It) && It->GetClass()->GetName().Contains(TEXT("CommandVehicle")))
+		{
+			return *It;
 		}
 	}
 
