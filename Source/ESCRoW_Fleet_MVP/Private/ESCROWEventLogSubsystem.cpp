@@ -15,6 +15,21 @@
 #include "EngineUtils.h"
 #include "ChaosVehicleMovementComponent.h"
 
+namespace
+{
+	// Record timestamps are stored as local FDateTime values; ToIso8601() appends a "Z",
+	// so convert to real UTC before formatting. Offset is rounded to whole minutes.
+	int32 LocalUtcOffsetMinutes()
+	{
+		return FMath::RoundToInt((FDateTime::Now() - FDateTime::UtcNow()).GetTotalMinutes());
+	}
+
+	FString LocalToUtcIso(const FDateTime& LocalTime)
+	{
+		return (LocalTime - FTimespan::FromMinutes(LocalUtcOffsetMinutes())).ToIso8601();
+	}
+}
+
 void UESCROWEventLogSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
@@ -293,7 +308,7 @@ FString UESCROWEventLogSubsystem::GetLogSummary() const
 
 FString UESCROWEventLogSubsystem::BuildTimestampString() const
 {
-	return FDateTime::Now().ToIso8601();
+	return FDateTime::UtcNow().ToIso8601();
 }
 
 FString UESCROWEventLogSubsystem::EscapeCSVField(const FString& Field)
@@ -394,6 +409,11 @@ FString UESCROWEventLogSubsystem::GetCurrentPhaseFromScenarioDirector() const
 	{
 		if (const UESCROWScenarioDirectorSubsystem* Director = World->GetSubsystem<UESCROWScenarioDirectorSubsystem>())
 		{
+			// The A-F phase enum wins once the generic phase flow has started.
+			if (Director->GetCurrentPhase() != EESCROWScenarioPhase::None)
+			{
+				return Director->GetCurrentPhaseName();
+			}
 			return Director->CurrentScenarioStep;
 		}
 	}
@@ -424,7 +444,8 @@ FString UESCROWEventLogSubsystem::BuildRunConfigJSON(const FESCROWRunConfig& Con
 	Lines.Add(FString::Printf(TEXT("  \"MapName\": \"%s\","), *EscapeJSONField(Config.MapName)));
 	Lines.Add(FString::Printf(TEXT("  \"AppVersionOrBuild\": \"%s\","), *EscapeJSONField(Config.AppVersionOrBuild)));
 	Lines.Add(FString::Printf(TEXT("  \"GitCommitOrBuildLabel\": \"%s\","), *EscapeJSONField(Config.GitCommitOrBuildLabel)));
-	Lines.Add(FString::Printf(TEXT("  \"CreatedAt\": \"%s\","), *Config.CreatedAt.ToIso8601()));
+	Lines.Add(FString::Printf(TEXT("  \"CreatedAt\": \"%s\","), *LocalToUtcIso(Config.CreatedAt)));
+	Lines.Add(FString::Printf(TEXT("  \"LocalUtcOffsetMinutes\": %d,"), LocalUtcOffsetMinutes()));
 	Lines.Add(FString::Printf(TEXT("  \"Notes\": \"%s\","), *EscapeJSONField(Config.Notes)));
 	Lines.Add(FString::Printf(TEXT("  \"RunValidity\": \"%s\""), *EscapeJSONField(Config.RunValidity.IsEmpty() ? TEXT("Valid") : *Config.RunValidity)));
 	Lines.Add(TEXT("}"));
@@ -434,7 +455,7 @@ FString UESCROWEventLogSubsystem::BuildRunConfigJSON(const FESCROWRunConfig& Con
 
 FString UESCROWEventLogSubsystem::BuildRunSummaryJSON(const FString& ExportMode, const FString& Reason) const
 {
-	const FString NowIso = FDateTime::Now().ToIso8601();
+	const FString NowIso = FDateTime::UtcNow().ToIso8601();
 
 	TArray<FString> Lines;
 	Lines.Add(TEXT("{"));
@@ -528,7 +549,7 @@ void UESCROWEventLogSubsystem::EndRun(const FString& EndReason)
 	bRunActive = false;
 	FlushAllOutputs();
 
-	const FString StatusLine = FString::Printf(TEXT("Run ended at %s. Reason: %s"), *FDateTime::Now().ToIso8601(), *EndReason);
+	const FString StatusLine = FString::Printf(TEXT("Run ended at %s. Reason: %s"), *FDateTime::UtcNow().ToIso8601(), *EndReason);
 	AppendLineToFile(TEXT("export_status.txt"), StatusLine);
 }
 
@@ -582,7 +603,7 @@ bool UESCROWEventLogSubsystem::InitializeOutputFiles()
 
 	bAllOk &= WriteWholeFile(TEXT("run_summary.json"), BuildRunSummaryJSON(TEXT("Initial"), TEXT("RunStart")));
 
-	const FString StatusText = FString::Printf(TEXT("ExportMode: Initial\r\nReason: RunStart\r\nbRunActive: true\r\nRun created at %s\r\nFolder: %s\r\n"), *FDateTime::Now().ToIso8601(), *CurrentRunFolder);
+	const FString StatusText = FString::Printf(TEXT("ExportMode: Initial\r\nReason: RunStart\r\nbRunActive: true\r\nRun created at %s\r\nFolder: %s\r\n"), *FDateTime::UtcNow().ToIso8601(), *CurrentRunFolder);
 	bAllOk &= WriteWholeFile(TEXT("export_status.txt"), StatusText);
 
 	return bAllOk;
@@ -608,7 +629,7 @@ bool UESCROWEventLogSubsystem::FlushAllOutputs()
 
 	const FString StatusText = FString::Printf(
 		TEXT("ExportMode: %s\r\nReason: %s\r\nbRunActive: %s\r\nLast flushed at %s\r\nFolder: %s\r\n"),
-		*Mode, *Reason, bRunActive ? TEXT("true") : TEXT("false"), *FDateTime::Now().ToIso8601(), *CurrentRunFolder);
+		*Mode, *Reason, bRunActive ? TEXT("true") : TEXT("false"), *FDateTime::UtcNow().ToIso8601(), *CurrentRunFolder);
 	bAllOk &= WriteWholeFile(TEXT("export_status.txt"), StatusText);
 
 	return bAllOk;
@@ -631,7 +652,7 @@ bool UESCROWEventLogSubsystem::CheckpointFlush()
 
 	const FString StatusText = FString::Printf(
 		TEXT("ExportMode: Checkpoint\r\nReason: AutosaveTimer\r\nbRunActive: true\r\nLastCheckpointAt: %s\r\nFolder: %s\r\nScenarioEventCount: %d\r\nParticipantActionCount: %d\r\nUIExposureCount: %d\r\nHeartbeatCount: %d\r\nStateTransitionCount: %d\r\nReportRecordCount: %d\r\n"),
-		*FDateTime::Now().ToIso8601(), *CurrentRunFolder, ScenarioEventCount, ParticipantActionCount, UIExposureCount, HeartbeatCount, StateTransitionCount, ReportRecordCount);
+		*FDateTime::UtcNow().ToIso8601(), *CurrentRunFolder, ScenarioEventCount, ParticipantActionCount, UIExposureCount, HeartbeatCount, StateTransitionCount, ReportRecordCount);
 	bAllOk &= WriteWholeFile(TEXT("export_status.txt"), StatusText);
 
 	return bAllOk;
@@ -671,7 +692,7 @@ bool UESCROWEventLogSubsystem::RecordScenarioEvent(const FESCROWScenarioEventRec
 	// mixed-type args (confirmed via a real build failure on a similar 21-arg
 	// call elsewhere in this file - see RecordHeartbeat).
 	const FString JsonLine = FString::Printf(TEXT("{\"RecordFamily\":\"ScenarioEvent\",\"RecordID\":\"%s\",\"RunID\":\"%s\",\"TimestampISO\":\"%s\",\"WorldSeconds\":%.3f,\"ScenarioTimeSeconds\":%.3f,\"Phase\":\"%s\",\"EventType\":\"%s\",\"EventLabel\":\"%s\","),
-		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *R.Timestamp.ToIso8601(), R.WorldSeconds, R.ScenarioTimeSeconds,
+		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *LocalToUtcIso(R.Timestamp), R.WorldSeconds, R.ScenarioTimeSeconds,
 		*EscapeJSONField(R.Phase), *EscapeJSONField(R.EventType), *EscapeJSONField(R.EventLabel))
 		+ FString::Printf(TEXT("\"TaskingID\":\"%s\",\"AffectedFollowerID\":%d,\"PlanValidity\":\"%s\",\"SourceSystem\":\"%s\",\"SourceObject\":\"%s\",\"EventID\":\"%s\",\"RelatedEventID\":\"%s\",\"PayloadJSON\":\"%s\"}"),
 		*EscapeJSONField(R.TaskingID), R.AffectedFollowerID, *EscapeJSONField(R.PlanValidity), *EscapeJSONField(R.SourceSystem),
@@ -923,7 +944,7 @@ bool UESCROWEventLogSubsystem::RecordParticipantAction(const FESCROWParticipantA
 	NoteOperatorContext(R.ActionType == TEXT("HideCommandHUD") ? FString(TEXT("NoConsolePage")) : R.ActivePage, R.SelectedFollowerID > 0 ? R.SelectedFollowerID : (R.ActionType == TEXT("SelectFollower") ? R.TargetFollowerID : 0));
 
 	const FString JsonLine = FString::Printf(TEXT("{\"RecordFamily\":\"ParticipantAction\",\"RecordID\":\"%s\",\"RunID\":\"%s\",\"TimestampISO\":\"%s\",\"WorldSeconds\":%.3f,\"ScenarioTimeSeconds\":%.3f,\"ActionType\":\"%s\",\"SourceSystem\":\"%s\",\"SourceObject\":\"%s\","),
-		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *R.Timestamp.ToIso8601(), R.WorldSeconds, R.ScenarioTimeSeconds,
+		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *LocalToUtcIso(R.Timestamp), R.WorldSeconds, R.ScenarioTimeSeconds,
 		*EscapeJSONField(R.ActionType), *EscapeJSONField(R.Source), *EscapeJSONField(R.SourceObject))
 		+ FString::Printf(TEXT("\"Phase\":\"%s\",\"ActivePage\":\"%s\",\"SelectedFollowerID\":%d,\"TargetFollowerID\":%d,\"TaskingID\":\"%s\",\"EventID\":\"%s\",\"RelatedEventID\":\"%s\",\"PayloadJSON\":\"%s\"}"),
 		*EscapeJSONField(R.Phase), *EscapeJSONField(R.ActivePage), R.SelectedFollowerID, R.TargetFollowerID,
@@ -970,7 +991,7 @@ bool UESCROWEventLogSubsystem::RecordUIExposure(const FESCROWUIExposureRecord& R
 	NoteOperatorContext(R.PageName, R.SelectedFollowerID);
 
 	const FString JsonLine = FString::Printf(TEXT("{\"RecordFamily\":\"UIExposure\",\"RecordID\":\"%s\",\"RunID\":\"%s\",\"TimestampISO\":\"%s\",\"WorldSeconds\":%.3f,\"ScenarioTimeSeconds\":%.3f,\"Phase\":\"%s\",\"PageName\":\"%s\",\"WidgetName\":\"%s\","),
-		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *R.Timestamp.ToIso8601(), R.WorldSeconds, R.ScenarioTimeSeconds, *EscapeJSONField(R.Phase),
+		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *LocalToUtcIso(R.Timestamp), R.WorldSeconds, R.ScenarioTimeSeconds, *EscapeJSONField(R.Phase),
 		*EscapeJSONField(R.PageName), *EscapeJSONField(R.WidgetName))
 		+ FString::Printf(TEXT("\"SelectedFollowerID\":%d,\"VisibleFields\":\"%s\",\"TaskingID\":\"%s\",\"SourceSystem\":\"%s\",\"SourceObject\":\"%s\",\"EventID\":\"%s\",\"RelatedEventID\":\"%s\",\"bDiagnosticEvidenceAvailable\":%s,\"PayloadJSON\":\"%s\"}"),
 		R.SelectedFollowerID, *EscapeJSONField(R.VisibleFields), *EscapeJSONField(R.TaskingID),
@@ -1021,7 +1042,7 @@ bool UESCROWEventLogSubsystem::RecordHeartbeat(const FESCROWHeartbeatRecord& Rec
 	// not a constant expression") on a single Printf with ~20+ mixed-type args -
 	// confirmed via a real build failure on this exact line before splitting.
 	const FString CsvRow = FString::Printf(TEXT("%s,%s,%s,%.3f,%.3f,%s,%s,"),
-		*EscapeCSVField(R.RecordID), *EscapeCSVField(R.RunID), *EscapeCSVField(R.Timestamp.ToIso8601()), R.WorldSeconds, R.ScenarioTimeSeconds,
+		*EscapeCSVField(R.RecordID), *EscapeCSVField(R.RunID), *EscapeCSVField(LocalToUtcIso(R.Timestamp)), R.WorldSeconds, R.ScenarioTimeSeconds,
 		*EscapeCSVField(R.Phase), *EscapeCSVField(R.ActivePage))
 		+ FString::Printf(TEXT("%d,%s,%s,%s,%s,%s,%.1f,"),
 		R.SelectedFollowerID, *EscapeCSVField(R.TaskingID), *EscapeCSVField(R.TaskingState), *EscapeCSVField(R.PlanValidity),
@@ -1032,7 +1053,7 @@ bool UESCROWEventLogSubsystem::RecordHeartbeat(const FESCROWHeartbeatRecord& Rec
 	AppendLineToFile(TEXT("fleet_heartbeat.csv"), CsvRow);
 
 	const FString JsonLine = FString::Printf(TEXT("{\"RecordFamily\":\"Heartbeat\",\"RecordID\":\"%s\",\"RunID\":\"%s\",\"TimestampISO\":\"%s\",\"WorldSeconds\":%.3f,\"ScenarioTimeSeconds\":%.3f,\"Phase\":\"%s\",\"ActivePage\":\"%s\","),
-		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *R.Timestamp.ToIso8601(), R.WorldSeconds, R.ScenarioTimeSeconds,
+		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *LocalToUtcIso(R.Timestamp), R.WorldSeconds, R.ScenarioTimeSeconds,
 		*EscapeJSONField(R.Phase), *EscapeJSONField(R.ActivePage))
 		+ FString::Printf(TEXT("\"SelectedFollowerID\":%d,\"TaskingID\":\"%s\",\"TaskingState\":\"%s\",\"PlanValidity\":\"%s\",\"SourceSystem\":\"%s\",\"EventID\":\"%s\",\"CVLocation\":\"%s\","),
 		R.SelectedFollowerID, *EscapeJSONField(R.TaskingID), *EscapeJSONField(R.TaskingState), *EscapeJSONField(R.PlanValidity),
@@ -1079,7 +1100,7 @@ bool UESCROWEventLogSubsystem::RecordStateTransition(const FESCROWStateTransitio
 	++StateTransitionCount;
 
 	const FString CsvRow = FString::Printf(TEXT("%s,%s,%s,%.3f,%.3f,%s,%s,%s,"),
-		*EscapeCSVField(R.RecordID), *EscapeCSVField(R.RunID), *EscapeCSVField(R.Timestamp.ToIso8601()), R.WorldSeconds, R.ScenarioTimeSeconds,
+		*EscapeCSVField(R.RecordID), *EscapeCSVField(R.RunID), *EscapeCSVField(LocalToUtcIso(R.Timestamp)), R.WorldSeconds, R.ScenarioTimeSeconds,
 		*EscapeCSVField(R.EntityID), *EscapeCSVField(R.EntityType), *EscapeCSVField(R.StateName))
 		+ FString::Printf(TEXT("%s,%s,%s,%s,%s,%s,%s"),
 		*EscapeCSVField(R.OldValue), *EscapeCSVField(R.NewValue), *EscapeCSVField(R.Source), *EscapeCSVField(R.RelatedEventID),
@@ -1087,7 +1108,7 @@ bool UESCROWEventLogSubsystem::RecordStateTransition(const FESCROWStateTransitio
 	AppendLineToFile(TEXT("state_transitions.csv"), CsvRow);
 
 	const FString JsonLine = FString::Printf(TEXT("{\"RecordFamily\":\"StateTransition\",\"RecordID\":\"%s\",\"RunID\":\"%s\",\"TimestampISO\":\"%s\",\"WorldSeconds\":%.3f,\"ScenarioTimeSeconds\":%.3f,\"EntityID\":\"%s\",\"EntityType\":\"%s\",\"StateName\":\"%s\","),
-		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *R.Timestamp.ToIso8601(), R.WorldSeconds, R.ScenarioTimeSeconds,
+		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *LocalToUtcIso(R.Timestamp), R.WorldSeconds, R.ScenarioTimeSeconds,
 		*EscapeJSONField(R.EntityID), *EscapeJSONField(R.EntityType), *EscapeJSONField(R.StateName))
 		+ FString::Printf(TEXT("\"OldValue\":\"%s\",\"NewValue\":\"%s\",\"SourceSystem\":\"%s\",\"SourceObject\":\"%s\",\"EventID\":\"%s\",\"RelatedEventID\":\"%s\",\"PayloadJSON\":\"%s\"}"),
 		*EscapeJSONField(R.OldValue), *EscapeJSONField(R.NewValue), *EscapeJSONField(R.Source), *EscapeJSONField(R.SourceObject),
@@ -1131,7 +1152,7 @@ bool UESCROWEventLogSubsystem::RecordReportField(const FESCROWReportRecord& Reco
 	++ReportRecordCount;
 
 	const FString CsvRow = FString::Printf(TEXT("%s,%s,%s,%.3f,%.3f,%s,%s,%s,"),
-		*EscapeCSVField(R.RecordID), *EscapeCSVField(R.RunID), *EscapeCSVField(R.Timestamp.ToIso8601()), R.WorldSeconds, R.ScenarioTimeSeconds,
+		*EscapeCSVField(R.RecordID), *EscapeCSVField(R.RunID), *EscapeCSVField(LocalToUtcIso(R.Timestamp)), R.WorldSeconds, R.ScenarioTimeSeconds,
 		*EscapeCSVField(R.ReportID), *EscapeCSVField(R.ReportType), *EscapeCSVField(R.FieldName))
 		+ FString::Printf(TEXT("%s,%s,%d,%s,%s,%s,%s"),
 		*EscapeCSVField(R.FieldValue), *EscapeCSVField(R.GroundTruthValue), R.Score,
@@ -1139,7 +1160,7 @@ bool UESCROWEventLogSubsystem::RecordReportField(const FESCROWReportRecord& Reco
 	AppendLineToFile(TEXT("reports.csv"), CsvRow);
 
 	const FString JsonLine = FString::Printf(TEXT("{\"RecordFamily\":\"ReportField\",\"RecordID\":\"%s\",\"RunID\":\"%s\",\"TimestampISO\":\"%s\",\"WorldSeconds\":%.3f,\"ScenarioTimeSeconds\":%.3f,\"ReportID\":\"%s\",\"ReportType\":\"%s\",\"FieldName\":\"%s\","),
-		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *R.Timestamp.ToIso8601(), R.WorldSeconds, R.ScenarioTimeSeconds,
+		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *LocalToUtcIso(R.Timestamp), R.WorldSeconds, R.ScenarioTimeSeconds,
 		*EscapeJSONField(R.ReportID), *EscapeJSONField(R.ReportType), *EscapeJSONField(R.FieldName))
 		+ FString::Printf(TEXT("\"FieldValue\":\"%s\",\"GroundTruthValue\":\"%s\",\"Score\":%d,\"SourceSystem\":\"%s\",\"SourceObject\":\"%s\","),
 		*EscapeJSONField(R.FieldValue), *EscapeJSONField(R.GroundTruthValue), R.Score,
@@ -1173,7 +1194,7 @@ bool UESCROWEventLogSubsystem::RecordRawEvent(const FString& EventType, const FS
 	}
 
 	const FString JsonLine = FString::Printf(TEXT("{\"RecordFamily\":\"Raw\",\"RunID\":\"%s\",\"TimestampISO\":\"%s\",\"WorldSeconds\":%.3f,\"EventType\":\"%s\",\"PayloadJSON\":\"%s\"}"),
-		*EscapeJSONField(CurrentRunID), *FDateTime::Now().ToIso8601(), GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f,
+		*EscapeJSONField(CurrentRunID), *FDateTime::UtcNow().ToIso8601(), GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f,
 		*EscapeJSONField(EventType), *EscapeJSONField(PayloadJSON));
 
 	return AppendLineToFile(TEXT("event_log_raw.jsonl"), JsonLine);
