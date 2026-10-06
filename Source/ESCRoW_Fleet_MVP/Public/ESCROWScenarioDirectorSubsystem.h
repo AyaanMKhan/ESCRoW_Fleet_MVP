@@ -379,6 +379,9 @@ private:
 	void ClearServiceCheckTimer();
 
 	FTimerHandle ServiceCheckTimerHandle;
+
+	// Re-posts the "INVALID RUN" on-screen banner while a DevelopmentOnly fallback run is active.
+	FTimerHandle InvalidRunBannerTimerHandle;
 	float ServiceCheckElapsedSeconds = 0.0f;
 	int32 LastLoggedRuntimeFleetValidCount = -1;
 	bool bServiceCheckInitialLogDone = false;

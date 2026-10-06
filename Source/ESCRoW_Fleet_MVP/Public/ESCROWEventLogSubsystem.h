@@ -406,6 +406,10 @@ private:
 	static FString FormatLocation(const FVector& Location);
 
 	int32 RunConfigCounterForRecordIDs = 0;
+
+	// Copy of the config the active run began with; repeated into run_summary.json.
+	FESCROWRunConfig ActiveRunConfig;
+
 	FTimerHandle HeartbeatTimerHandle;
 	FTimerHandle AutosaveTimerHandle;
 

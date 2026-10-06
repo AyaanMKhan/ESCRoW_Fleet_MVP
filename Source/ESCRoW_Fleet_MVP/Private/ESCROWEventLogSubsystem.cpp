@@ -418,7 +418,8 @@ FString UESCROWEventLogSubsystem::BuildRunConfigJSON(const FESCROWRunConfig& Con
 	Lines.Add(FString::Printf(TEXT("  \"WorkloadLevel\": \"%s\","), *EscapeJSONField(Config.WorkloadLevel)));
 	Lines.Add(FString::Printf(TEXT("  \"ScenarioVariant\": \"%s\","), *EscapeJSONField(Config.ScenarioVariant)));
 	Lines.Add(FString::Printf(TEXT("  \"EventSalience\": \"%s\","), *EscapeJSONField(Config.EventSalience)));
-	Lines.Add(FString::Printf(TEXT("  \"UncertaintyLevel\": \"%s\","), *EscapeJSONField(Config.UncertaintyLevel)));
+	Lines.Add(FString::Printf(TEXT("  \"UncertaintyLevel\": \"%s\","), *EscapeJSONField(Config.UncertaintyLevel.IsEmpty() ? TEXT("Unspecified") : *Config.UncertaintyLevel)));
+	Lines.Add(FString::Printf(TEXT("  \"ProjectionSupport\": \"%s\","), *EscapeJSONField(Config.ProjectionSupport.IsEmpty() ? TEXT("Unspecified") : *Config.ProjectionSupport)));
 	Lines.Add(FString::Printf(TEXT("  \"RunSeed\": %d,"), Config.RunSeed));
 	Lines.Add(FString::Printf(TEXT("  \"MapName\": \"%s\","), *EscapeJSONField(Config.MapName)));
 	Lines.Add(FString::Printf(TEXT("  \"AppVersionOrBuild\": \"%s\","), *EscapeJSONField(Config.AppVersionOrBuild)));
@@ -439,6 +440,13 @@ FString UESCROWEventLogSubsystem::BuildRunSummaryJSON(const FString& ExportMode,
 	Lines.Add(TEXT("{"));
 	Lines.Add(FString::Printf(TEXT("  \"RunID\": \"%s\","), *EscapeJSONField(CurrentRunID)));
 	Lines.Add(FString::Printf(TEXT("  \"RunFolder\": \"%s\","), *EscapeJSONField(CurrentRunFolder)));
+	Lines.Add(FString::Printf(TEXT("  \"ScenarioID\": \"%s\","), *EscapeJSONField(ActiveRunConfig.ScenarioID)));
+	Lines.Add(FString::Printf(TEXT("  \"ConditionID\": \"%s\","), *EscapeJSONField(ActiveRunConfig.ConditionID)));
+	Lines.Add(FString::Printf(TEXT("  \"UncertaintyLevel\": \"%s\","), *EscapeJSONField(ActiveRunConfig.UncertaintyLevel.IsEmpty() ? TEXT("Unspecified") : *ActiveRunConfig.UncertaintyLevel)));
+	Lines.Add(FString::Printf(TEXT("  \"ProjectionSupport\": \"%s\","), *EscapeJSONField(ActiveRunConfig.ProjectionSupport.IsEmpty() ? TEXT("Unspecified") : *ActiveRunConfig.ProjectionSupport)));
+	Lines.Add(FString::Printf(TEXT("  \"RunSeed\": %d,"), ActiveRunConfig.RunSeed));
+	Lines.Add(FString::Printf(TEXT("  \"GitCommitOrBuildLabel\": \"%s\","), *EscapeJSONField(ActiveRunConfig.GitCommitOrBuildLabel)));
+	Lines.Add(FString::Printf(TEXT("  \"RunValidity\": \"%s\","), *EscapeJSONField(ActiveRunConfig.RunValidity.IsEmpty() ? TEXT("Valid") : *ActiveRunConfig.RunValidity)));
 	Lines.Add(FString::Printf(TEXT("  \"bRunActive\": %s,"), bRunActive ? TEXT("true") : TEXT("false")));
 	Lines.Add(FString::Printf(TEXT("  \"ExportMode\": \"%s\","), *EscapeJSONField(ExportMode)));
 	Lines.Add(FString::Printf(TEXT("  \"Reason\": \"%s\","), *EscapeJSONField(Reason)));
@@ -471,6 +479,7 @@ bool UESCROWEventLogSubsystem::BeginRunFromConfig(const FESCROWRunConfig& Config
 		EndRun(TEXT("SupersededByNewRun"));
 	}
 
+	ActiveRunConfig = Config;
 	CurrentRunID = Config.RunID.IsEmpty() ? FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")) : Config.RunID;
 	// FPlatformProcess::UserDir() resolves FOLDERID_Documents, which Windows
 	// Known Folder Move can redirect into OneDrive. UserHomeDir() resolves

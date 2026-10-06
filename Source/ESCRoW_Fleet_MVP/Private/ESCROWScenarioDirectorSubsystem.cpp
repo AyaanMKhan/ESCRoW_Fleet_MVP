@@ -10,9 +10,54 @@
 #include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 #include "UObject/UnrealType.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Engine/Engine.h"
 
 namespace
 {
+	// Best-effort short commit from <ProjectDir>/.git (no process spawn); dirty state is not detected.
+	FString ResolveGitCommitLabel()
+	{
+		const FString GitDir = FPaths::Combine(FPaths::ProjectDir(), TEXT(".git"));
+		FString Head;
+		if (!FFileHelper::LoadFileToString(Head, *FPaths::Combine(GitDir, TEXT("HEAD"))))
+		{
+			return TEXT("UNKNOWN_NO_GIT");
+		}
+		Head.TrimStartAndEndInline();
+		FString Sha = Head;
+		if (Head.StartsWith(TEXT("ref:")))
+		{
+			const FString RefPath = Head.Mid(4).TrimStartAndEnd();
+			Sha.Reset();
+			if (!FFileHelper::LoadFileToString(Sha, *FPaths::Combine(GitDir, RefPath)))
+			{
+				FString Packed;
+				if (FFileHelper::LoadFileToString(Packed, *FPaths::Combine(GitDir, TEXT("packed-refs"))))
+				{
+					TArray<FString> PackedLines;
+					Packed.ParseIntoArrayLines(PackedLines);
+					for (const FString& Line : PackedLines)
+					{
+						if (Line.EndsWith(RefPath))
+						{
+							Sha = Line.Left(40);
+							break;
+						}
+					}
+				}
+			}
+			Sha.TrimStartAndEndInline();
+		}
+		return Sha.Len() >= 7 ? Sha.Left(7) : FString(TEXT("UNKNOWN_NO_GIT"));
+	}
+
+	FString FactorCode(const FString& Level)
+	{
+		return Level.Equals(TEXT("Low"), ESearchCase::IgnoreCase) ? TEXT("L") : (Level.Equals(TEXT("High"), ESearchCase::IgnoreCase) ? TEXT("H") : TEXT("U"));
+	}
+
 	const FString Milestone_F3TakeoverActive = TEXT("F3TakeoverActive");
 	const FString Milestone_F3ReturnComplete = TEXT("F3ReturnComplete");
 	constexpr float ScenarioTickInterval = 0.25f;
@@ -445,6 +490,36 @@ void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()
 
 	if (bFoundPending)
 	{
+		// Normalize pilot-condition provenance first so ConditionID/RunID reflect it.
+		if (RunConfig.UncertaintyLevel.IsEmpty())
+		{
+			RunConfig.UncertaintyLevel = TEXT("Unspecified");
+		}
+		if (RunConfig.ProjectionSupport.IsEmpty())
+		{
+			RunConfig.ProjectionSupport = TEXT("Unspecified");
+		}
+		if (RunConfig.GitCommitOrBuildLabel.IsEmpty())
+		{
+			RunConfig.GitCommitOrBuildLabel = ResolveGitCommitLabel();
+		}
+		{
+			const bool bFactorSpecified = !RunConfig.UncertaintyLevel.Equals(TEXT("Unspecified"), ESearchCase::IgnoreCase)
+				|| !RunConfig.ProjectionSupport.Equals(TEXT("Unspecified"), ESearchCase::IgnoreCase);
+			if (RunConfig.ConditionID.IsEmpty() || RunConfig.ConditionID == TEXT("UNSET") || bFactorSpecified)
+			{
+				const FString DerivedConditionID = FString::Printf(TEXT("U%s_P%s"), *FactorCode(RunConfig.UncertaintyLevel), *FactorCode(RunConfig.ProjectionSupport));
+				if (RunConfig.ConditionID != DerivedConditionID)
+				{
+					if (!RunConfig.ConditionID.IsEmpty() && RunConfig.ConditionID != TEXT("UNSET"))
+					{
+						RunConfig.Notes += FString::Printf(TEXT("%sMenuConditionSummary=%s"), RunConfig.Notes.IsEmpty() ? TEXT("") : TEXT(" | "), *RunConfig.ConditionID);
+					}
+					RunConfig.ConditionID = DerivedConditionID;
+					RunConfig.RunID.Reset(); // regenerate so the run folder carries the 2x2 cell
+				}
+			}
+		}
 		if (RunConfig.RunID.IsEmpty())
 		{
 			RunConfig.RunID = Session->GenerateRunID(RunConfig.ScenarioID, RunConfig.ConditionID, RunConfig.ParticipantID);
@@ -461,7 +536,6 @@ void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()
 		{
 			RunConfig.RunValidity = TEXT("Valid");
 		}
-
 		EventLog->BeginRunFromConfig(RunConfig);
 		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("RunInitialized"), TEXT("Level loaded and run initialized from menu-provided config"), FString(), 0, TEXT("Unspecified"), TEXT("{\"fallback\":false}"));
 		EventLog->StartHeartbeat();
@@ -493,6 +567,8 @@ void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()
 		RunConfig.ScenarioVariant = RawMapName.Contains(TEXT("FLAT_PILOT")) ? TEXT("FlatPilot") : TEXT("DesertIntegration");
 		RunConfig.EventSalience = TEXT("Unspecified");
 		RunConfig.UncertaintyLevel = TEXT("Unspecified");
+		RunConfig.ProjectionSupport = TEXT("Unspecified");
+		RunConfig.GitCommitOrBuildLabel = ResolveGitCommitLabel();
 		RunConfig.MapName = RawMapName;
 		RunConfig.CreatedAt = FDateTime::Now();
 		RunConfig.RunValidity = TEXT("DevelopmentOnly");
@@ -500,6 +576,18 @@ void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()
 		RunConfig.RunID = Session->GenerateRunID(RunConfig.ScenarioID, RunConfig.ConditionID, RunConfig.ParticipantID);
 
 		EventLog->BeginRunFromConfig(RunConfig);
+		UE_LOG(LogTemp, Error, TEXT("ESCROWScenarioDirector: INVALID RUN - DEVELOPMENT ONLY. Launched without Experiment Setup; data is NOT valid participant data (RunValidity=DevelopmentOnly)."));
+		if (UWorld* BannerWorld = GetWorld())
+		{
+			TWeakObjectPtr<UESCROWScenarioDirectorSubsystem> WeakThis(this);
+			BannerWorld->GetTimerManager().SetTimer(InvalidRunBannerTimerHandle, FTimerDelegate::CreateLambda([WeakThis]()
+			{
+				if (WeakThis.IsValid() && GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(static_cast<uint64>(0xE5C40001), 2.0f, FColor::Red, TEXT("INVALID RUN - DEVELOPMENT ONLY: launched without Experiment Setup. Data is NOT valid participant data."));
+				}
+			}), 1.0f, true, 0.0f);
+		}
 		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("FallbackRunConfigUsed"), TEXT("Scenario map launched without the setup menu; development-only fallback run config generated"), FString(), 0, TEXT("DevelopmentOnly"), TEXT("{\"fallback\":true}"));
 		EventLog->StartHeartbeat();
 		return;

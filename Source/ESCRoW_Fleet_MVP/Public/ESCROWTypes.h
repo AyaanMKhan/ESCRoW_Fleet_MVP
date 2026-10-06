@@ -689,6 +689,10 @@ struct FESCROWRunConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
 	FString UncertaintyLevel;
 
+	// Pilot 2x2 factor B: "Low" / "High" / "Unspecified".
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString ProjectionSupport;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
 	int32 RunSeed = 0;
 
