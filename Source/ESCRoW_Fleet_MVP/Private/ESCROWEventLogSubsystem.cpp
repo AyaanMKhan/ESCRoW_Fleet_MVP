@@ -491,6 +491,8 @@ bool UESCROWEventLogSubsystem::BeginRunFromConfig(const FESCROWRunConfig& Config
 	ScenarioEventCount = 0;
 	ParticipantActionCount = 0;
 	UIExposureCount = 0;
+	LastKnownActivePage = TEXT("NoConsolePage");
+	LastKnownSelectedFollowerID = -1;
 	HeartbeatCount = 0;
 	StateTransitionCount = 0;
 	ReportRecordCount = 0;
@@ -918,6 +920,7 @@ bool UESCROWEventLogSubsystem::RecordParticipantAction(const FESCROWParticipantA
 	if (R.EventID.IsEmpty()) { R.EventID = R.RecordID; }
 
 	++ParticipantActionCount;
+	NoteOperatorContext(R.ActionType == TEXT("HideCommandHUD") ? FString(TEXT("NoConsolePage")) : R.ActivePage, R.SelectedFollowerID > 0 ? R.SelectedFollowerID : (R.ActionType == TEXT("SelectFollower") ? R.TargetFollowerID : 0));
 
 	const FString JsonLine = FString::Printf(TEXT("{\"RecordFamily\":\"ParticipantAction\",\"RecordID\":\"%s\",\"RunID\":\"%s\",\"TimestampISO\":\"%s\",\"WorldSeconds\":%.3f,\"ScenarioTimeSeconds\":%.3f,\"ActionType\":\"%s\",\"SourceSystem\":\"%s\",\"SourceObject\":\"%s\","),
 		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *R.Timestamp.ToIso8601(), R.WorldSeconds, R.ScenarioTimeSeconds,
@@ -964,6 +967,7 @@ bool UESCROWEventLogSubsystem::RecordUIExposure(const FESCROWUIExposureRecord& R
 	if (R.Phase.IsEmpty()) { R.Phase = GetCurrentPhaseFromScenarioDirector(); }
 
 	++UIExposureCount;
+	NoteOperatorContext(R.PageName, R.SelectedFollowerID);
 
 	const FString JsonLine = FString::Printf(TEXT("{\"RecordFamily\":\"UIExposure\",\"RecordID\":\"%s\",\"RunID\":\"%s\",\"TimestampISO\":\"%s\",\"WorldSeconds\":%.3f,\"ScenarioTimeSeconds\":%.3f,\"Phase\":\"%s\",\"PageName\":\"%s\",\"WidgetName\":\"%s\","),
 		*EscapeJSONField(R.RecordID), *EscapeJSONField(R.RunID), *R.Timestamp.ToIso8601(), R.WorldSeconds, R.ScenarioTimeSeconds, *EscapeJSONField(R.Phase),
@@ -1206,14 +1210,45 @@ bool UESCROWEventLogSubsystem::RecordHeartbeatNow()
 {
 	FESCROWHeartbeatRecord R;
 	R.Phase = GetCurrentPhaseFromScenarioDirector();
-	R.ActivePage = TEXT("UNSET");
-	R.SelectedFollowerID = -1;
+	R.ActivePage = LastKnownActivePage.IsEmpty() ? TEXT("UNSET") : LastKnownActivePage;
+	R.SelectedFollowerID = LastKnownSelectedFollowerID;
 	R.TaskingID = TEXT("UNSET");
 	R.TaskingState = TEXT("UNSET");
 	R.PlanValidity = TEXT("UNSET");
 	R.PayloadJSON = TEXT("{}");
 
+	bool bTakeoverActive = false;
+	if (const UWorld* World = GetWorld())
+	{
+		if (const UESCROWScenarioDirectorSubsystem* Director = World->GetSubsystem<UESCROWScenarioDirectorSubsystem>())
+		{
+			const FString TaskingID = Director->GetActiveTaskingID();
+			if (!TaskingID.IsEmpty()) { R.TaskingID = TaskingID; R.TaskingState = Director->GetActiveTaskingStateName(); }
+			const FString Validity = Director->GetCurrentPlanValidity();
+			if (!Validity.IsEmpty()) { R.PlanValidity = Validity; }
+		}
+		if (const UESCROWFleetSubsystem* Fleet = World->GetSubsystem<UESCROWFleetSubsystem>())
+		{
+			bTakeoverActive = Fleet->bTakeoverActive;
+		}
+	}
+	R.PayloadJSON = FString::Printf(TEXT("{\"TakeoverActive\":%s}"), bTakeoverActive ? TEXT("true") : TEXT("false"));
+
 	return RecordHeartbeat(R);
+}
+
+void UESCROWEventLogSubsystem::NoteOperatorContext(const FString& Page, int32 SelectedFollowerID)
+{
+	if (!Page.IsEmpty() && Page != TEXT("UNSET"))
+	{
+		LastKnownActivePage = Page;
+		// Follower pages are named F<n>; the page itself identifies the selected follower.
+		if (Page.Len() >= 2 && Page[0] == TCHAR('F') && FChar::IsDigit(Page[1]))
+		{
+			LastKnownSelectedFollowerID = FCString::Atoi(*Page.Mid(1));
+		}
+	}
+	if (SelectedFollowerID > 0) { LastKnownSelectedFollowerID = SelectedFollowerID; }
 }
 
 void UESCROWEventLogSubsystem::HeartbeatTimerTick()
@@ -1250,6 +1285,7 @@ void UESCROWEventLogSubsystem::StopAutosaveTimer()
 
 void UESCROWEventLogSubsystem::AutosaveTimerTick()
 {
+	UE_LOG(LogTemp, Log, TEXT("ESCROWEventLog: autosave checkpoint (run %s, %d heartbeats)"), *CurrentRunID, HeartbeatCount);
 	CheckpointFlush();
 }
 

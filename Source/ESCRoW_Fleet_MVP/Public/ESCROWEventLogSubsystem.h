@@ -111,6 +111,11 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|DataManager")
 	bool bHeartbeatEnabled = false;
 
+	// Last operator context seen on participant-action / UI-exposure records; stamped onto heartbeat rows.
+	FString LastKnownActivePage;
+	int32 LastKnownSelectedFollowerID = -1;
+	void NoteOperatorContext(const FString& Page, int32 SelectedFollowerID);
+
 	// Periodic checkpoint/autosave: re-writes run_summary.json/export_status.txt
 	// (current counts, bRunActive still true) every AutosaveIntervalSeconds while
 	// a run is active, so a crash or forced exit does not lose all buffered
