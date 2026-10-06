@@ -60,24 +60,52 @@ EESCROWPlayerControlMode UESCROWPlayerControlRouterComponent::GetPreviousPlayerM
 
 void UESCROWPlayerControlRouterComponent::FocusCommandHUD()
 {
+	// A remote takeover owns the player mode until EndRemoteTakeoverShell; HUD toggles (Tab/M/etc.)
+	// must not pull the mode out of RemoteTakeover or B/V can no longer request return.
+	if (bRemoteTakeoverActive)
+	{
+		return;
+	}
+
 	bConsoleFocused = true;
 	SetPlayerMode(EESCROWPlayerControlMode::FocusedCommandHUD);
 }
 
 void UESCROWPlayerControlRouterComponent::ReturnToCompactHUD()
 {
+	// A remote takeover owns the player mode until EndRemoteTakeoverShell; HUD toggles (Tab/M/etc.)
+	// must not pull the mode out of RemoteTakeover or B/V can no longer request return.
+	if (bRemoteTakeoverActive)
+	{
+		return;
+	}
+
 	bConsoleFocused = false;
 	SetPlayerMode(EESCROWPlayerControlMode::CompactHUD);
 }
 
 void UESCROWPlayerControlRouterComponent::OpenFullMap()
 {
+	// A remote takeover owns the player mode until EndRemoteTakeoverShell; HUD toggles (Tab/M/etc.)
+	// must not pull the mode out of RemoteTakeover or B/V can no longer request return.
+	if (bRemoteTakeoverActive)
+	{
+		return;
+	}
+
 	bFullMapOpen = true;
 	SetPlayerMode(EESCROWPlayerControlMode::FullMap);
 }
 
 void UESCROWPlayerControlRouterComponent::CloseFullMap()
 {
+	// A remote takeover owns the player mode until EndRemoteTakeoverShell; HUD toggles (Tab/M/etc.)
+	// must not pull the mode out of RemoteTakeover or B/V can no longer request return.
+	if (bRemoteTakeoverActive)
+	{
+		return;
+	}
+
 	bFullMapOpen = false;
 	SetPlayerMode(PreviousPlayerMode);
 }
