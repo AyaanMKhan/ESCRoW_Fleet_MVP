@@ -274,6 +274,8 @@ void UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeReady()
 	{
 		Fleet->GenerateInitialMissionReports(ScenarioName, CurrentMissionTime);
 	}
+
+	StartPilotPhaseFlow();
 }
 
 void UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeFailed(const FString& Reason)
@@ -1573,4 +1575,198 @@ void UESCROWScenarioDirectorSubsystem::EndGenericScenario(FString EndReason)
 
 	// RA42A: shutdown flush remains EventLog's own responsibility (see RA41D);
 	// this deliberately does not call EventLog->EndRun().
+}
+
+// =============================== Pilot phase flow (A-D) ===============================
+// Flat pilot map only. Zones are level actors carrying one of these tags (so lookup works
+// in packaged builds, where actor labels do not exist).
+
+namespace
+{
+	const FName ZoneTag_RallyA(TEXT("ESCROW_Zone_RallyA"));
+	const FName ZoneTag_RallyB(TEXT("ESCROW_Zone_RallyB"));
+	constexpr float PilotPhaseTickSeconds = 0.25f;
+	// The disruption is time-based, not zone-based: free-driving participants cannot be
+	// relied on to cross a particular patch of ground, so it fires this long after the
+	// command vehicle reaches Rally B.
+	constexpr double PilotDisruptionDelayAfterRallyBSeconds = 15.0;
+}
+
+AActor* UESCROWScenarioDirectorSubsystem::FindZoneActorByTag(const FName& Tag) const
+{
+	if (const UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (IsValid(*It) && It->ActorHasTag(Tag))
+			{
+				return *It;
+			}
+		}
+	}
+	return nullptr;
+}
+
+bool UESCROWScenarioDirectorSubsystem::IsLocationInZone(const AActor* Zone, const FVector& Location) const
+{
+	if (!IsValid(Zone))
+	{
+		return false;
+	}
+	const FBox Box = Zone->GetComponentsBoundingBox(true);
+	return Box.IsValid && Location.X >= Box.Min.X && Location.X <= Box.Max.X && Location.Y >= Box.Min.Y && Location.Y <= Box.Max.Y;
+}
+
+AActor* UESCROWScenarioDirectorSubsystem::FindCommandVehicleForPhaseFlow() const
+{
+	if (PilotCommandVehicle.IsValid())
+	{
+		return PilotCommandVehicle.Get();
+	}
+	if (const UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (IsValid(*It) && It->GetClass()->GetName().Contains(TEXT("CommandVehicle")))
+			{
+				return *It;
+			}
+		}
+	}
+	return nullptr;
+}
+
+void UESCROWScenarioDirectorSubsystem::StartPilotPhaseFlow()
+{
+	UWorld* World = GetWorld();
+	if (!World || bPilotPhaseFlowActive || !World->GetMapName().Contains(TEXT("FLAT_PILOT")))
+	{
+		return;
+	}
+
+	// Without the Rally B zone there is no deterministic disruption; stay on the legacy path.
+	if (!FindZoneActorByTag(ZoneTag_RallyB))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ESCROWScenarioDirector: pilot phase flow not started; Rally B zone tag missing on this map."));
+		LogScenarioEvent(TEXT("PilotPhaseFlowSkipped"), 0, TEXT("Zone tag missing (ESCROW_Zone_RallyB)."));
+		return;
+	}
+
+	StartGenericScenario();
+	SetScenarioPhase(EESCROWScenarioPhase::PhaseA_RoutineMonitoring, TEXT("ScenarioRuntimeReady"));
+	bPilotPhaseFlowActive = true;
+	bPilotRallyAArrivalLogged = false;
+	bPilotTakeoverSeenOnAffected = false;
+	PilotDisruptionOnsetWorldSeconds = -1.0;
+	PilotWrongFollowersLogged.Reset();
+	World->GetTimerManager().SetTimer(PilotPhaseTimerHandle, this, &UESCROWScenarioDirectorSubsystem::PilotPhaseTick, PilotPhaseTickSeconds, true);
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
+{
+	UWorld* World = GetWorld();
+	UESCROWFleetSubsystem* Fleet = GetFleet();
+	if (!World || !Fleet || !bPilotPhaseFlowActive)
+	{
+		return;
+	}
+
+	AActor* CV = FindCommandVehicleForPhaseFlow();
+	if (!CV)
+	{
+		return;
+	}
+	PilotCommandVehicle = CV;
+	const FVector CVLocation = CV->GetActorLocation();
+	UESCROWEventLogSubsystem* EventLog = GetEventLog();
+
+	switch (CurrentPhase)
+	{
+	case EESCROWScenarioPhase::PhaseA_RoutineMonitoring:
+		if (!bPilotRallyAArrivalLogged && IsLocationInZone(FindZoneActorByTag(ZoneTag_RallyA), CVLocation))
+		{
+			bPilotRallyAArrivalLogged = true;
+			LogScenarioEvent(TEXT("RallyAReached"), 0, TEXT("Command vehicle entered Rally A zone."));
+			if (EventLog) { EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("RallyAReached"), TEXT("Command vehicle entered Rally A zone."), FString(), 0, CurrentPlanValidity, FString()); }
+		}
+		if (IsLocationInZone(FindZoneActorByTag(ZoneTag_RallyB), CVLocation))
+		{
+			SetScenarioPhase(EESCROWScenarioPhase::PhaseB_RallyBreakout, TEXT("CommandVehicleEnteredRallyB"));
+			// Until the disruption fires, PilotDisruptionOnsetWorldSeconds holds the time Rally B
+			// was reached (it is overwritten with the real onset time below).
+			PilotDisruptionOnsetWorldSeconds = World->GetTimeSeconds();
+			LogScenarioEvent(TEXT("RallyBReached"), 0, TEXT("Command vehicle entered Rally B zone."));
+			if (EventLog) { EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("RallyBReached"), TEXT("Command vehicle entered Rally B zone."), FString(), 0, CurrentPlanValidity, FString()); }
+		}
+		break;
+
+	case EESCROWScenarioPhase::PhaseB_RallyBreakout:
+		if (PilotDisruptionOnsetWorldSeconds >= 0.0 && (World->GetTimeSeconds() - PilotDisruptionOnsetWorldSeconds) >= PilotDisruptionDelayAfterRallyBSeconds)
+		{
+			PilotDisruptionOnsetWorldSeconds = World->GetTimeSeconds();
+			SetScenarioPhase(EESCROWScenarioPhase::PhaseC_DisruptionDetection, TEXT("RallyBReachedPlusDelay"));
+			SetAffectedFollowerID(PilotAffectedFollowerID, TEXT("DisruptionOnset"));
+			const FString OnsetEventID = FString::Printf(TEXT("DISRUPTION_ONSET_F%d"), PilotAffectedFollowerID);
+			PostTasking(TEXT("TASK_C_DISRUPTION"), TEXT("Detect disruption and take over affected follower"), EESCROWScenarioPhase::PhaseC_DisruptionDetection,
+				TEXT("TakeOverAffectedFollower"), PilotAffectedFollowerID, TEXT("Valid"), OnsetEventID);
+			if (EventLog)
+			{
+				EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("DisruptionOnset"),
+					FString::Printf(TEXT("Disruption onset: F%d requires takeover."), PilotAffectedFollowerID), ActiveTasking.TaskingID, PilotAffectedFollowerID, CurrentPlanValidity,
+					FString::Printf(TEXT("{\"AffectedFollowerID\":%d,\"OnsetWorldSeconds\":%.3f}"), PilotAffectedFollowerID, PilotDisruptionOnsetWorldSeconds));
+			}
+			Fleet->RequestTakeover(PilotAffectedFollowerID);
+			Fleet->PostNotification(EESCROWNotificationKind::TakeoverRequest, EESCROWMessageSeverity::Warning, PilotAffectedFollowerID,
+				FString::Printf(TEXT("TAKEOVER REQUESTED: F%d"), PilotAffectedFollowerID),
+				FString::Printf(TEXT("F%d requires operator takeover."), PilotAffectedFollowerID),
+				FString::Printf(TEXT("F%d"), PilotAffectedFollowerID));
+			Fleet->AddMissionReport(FString::Printf(TEXT("RPT-0003-DISRUPTION-F%d"), PilotAffectedFollowerID), TEXT("Convoy Alert"), TEXT("ScenarioDirector"),
+				FString::Printf(TEXT("F%d has reported a fault and cannot continue autonomously. Operator intervention is required."), PilotAffectedFollowerID), true);
+		}
+		break;
+
+	case EESCROWScenarioPhase::PhaseC_DisruptionDetection:
+		if (Fleet->bTakeoverActive)
+		{
+			const int32 TakenOver = Fleet->ActiveTakeoverFollowerID;
+			if (TakenOver == PilotAffectedFollowerID)
+			{
+				bPilotTakeoverSeenOnAffected = true;
+				const double Latency = World->GetTimeSeconds() - PilotDisruptionOnsetWorldSeconds;
+				if (EventLog)
+				{
+					EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("TakeoverOnAffectedFollower"),
+						FString::Printf(TEXT("Operator took over affected follower F%d."), TakenOver), ActiveTasking.TaskingID, TakenOver, CurrentPlanValidity,
+						FString::Printf(TEXT("{\"TakeoverLatencySeconds\":%.3f}"), Latency));
+				}
+				AcknowledgeActiveTasking(TEXT("OperatorTakeover"));
+				SetScenarioPhase(EESCROWScenarioPhase::PhaseD_TakeoverIntervention, TEXT("TakeoverOnAffectedFollower"));
+			}
+			else if (!PilotWrongFollowersLogged.Contains(TakenOver))
+			{
+				PilotWrongFollowersLogged.Add(TakenOver);
+				if (EventLog)
+				{
+					EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("WrongFollowerTakeover"),
+						FString::Printf(TEXT("Operator took over F%d; affected follower is F%d."), TakenOver, PilotAffectedFollowerID), ActiveTasking.TaskingID, TakenOver, CurrentPlanValidity,
+						FString::Printf(TEXT("{\"TakenOverFollowerID\":%d,\"AffectedFollowerID\":%d}"), TakenOver, PilotAffectedFollowerID));
+				}
+			}
+		}
+		break;
+
+	case EESCROWScenarioPhase::PhaseD_TakeoverIntervention:
+		if (bPilotTakeoverSeenOnAffected && !Fleet->bTakeoverActive)
+		{
+			CompleteActiveTasking(TEXT("TakeoverReleased"));
+			SetScenarioPhase(EESCROWScenarioPhase::PhaseE_PlanRepair, TEXT("TakeoverReleased"));
+			// Plan repair (E) and closeout (F) are not implemented yet; stop evaluating zones.
+			World->GetTimerManager().ClearTimer(PilotPhaseTimerHandle);
+			bPilotPhaseFlowActive = false;
+		}
+		break;
+
+	default:
+		break;
+	}
 }

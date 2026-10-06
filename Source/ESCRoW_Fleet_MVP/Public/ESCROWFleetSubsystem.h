@@ -152,8 +152,56 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
 	bool ResetDefaultFollowChain();
 
+	// ---- Alert toast stack ------------------------------------------------
+	// Active alerts stay visible until acknowledged (hotkey or opening the related
+	// HUD page) or until they have been active for NotificationAutoClearSeconds,
+	// when they expire one per second, oldest first. Every post / acknowledge /
+	// expire is written to the scenario event log.
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Fleet")
+	TArray<FESCROWNotification> Notifications;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "ESCRoW|Fleet")
+	float NotificationAutoClearSeconds = 30.0f;
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	int32 PostNotification(EESCROWNotificationKind Kind, EESCROWMessageSeverity Severity, int32 FollowerID, const FString& Title, const FString& Body, const FString& RelatedPage, int32 ReportIndex = -1);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	bool AcknowledgeNotification(int32 NotificationID, const FString& Method);
+
+	// Acknowledges the oldest Active alert (hotkey path).
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	bool AcknowledgeOldestNotification(const FString& Method);
+
+	// Acknowledges every Active alert whose RelatedPage matches (page-opened path).
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	int32 AcknowledgeNotificationsForPage(const FString& PageName);
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
+	int32 GetActiveNotificationCount() const;
+
+	// Slot 0 = newest Active alert. Returns "" when the slot is empty.
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
+	FString GetNotificationSlotText(int32 SlotIndex) const;
+
+	// 0 Info, 1 Warning, 2 Critical; -1 when the slot is empty.
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
+	int32 GetNotificationSlotSeverity(int32 SlotIndex) const;
+
+	// Appends a runtime mission report (initial reports come from
+	// GenerateInitialMissionReports). Logs it as Generated and, when bNotify, posts
+	// a Report alert. Returns the new report index.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
+	int32 AddMissionReport(const FString& ReportID, const FString& Title, const FString& Source, const FString& BodyText, bool bRequiresAck, bool bNotify = true);
+
 private:
 	FESCROWFollowerStatus* FindFollower(int32 FollowerID);
+
+	int32 NotificationCounter = 0;
+	FTimerHandle NotificationTimerHandle;
+	void NotificationTick();
+	void LogNotificationEvent(const TCHAR* EventType, const FESCROWNotification& Notification, const FString& Method, float AgeSeconds) const;
+	const FESCROWNotification* GetActiveBySlot(int32 SlotIndex) const;
 	const FESCROWFollowerStatus* FindFollower(int32 FollowerID) const;
 
 	FString GenerateMessageID();

@@ -338,6 +338,25 @@ public:
 	void EndGenericScenario(FString EndReason);
 
 private:
+	// Pilot phase flow (flat pilot map only): zone actors are found by tag, the
+	// command vehicle's position drives A->B->C, and the system-raised disruption
+	// is deterministic (fires on entering the onset zone). Operator takeover on the
+	// affected follower advances C->D; release advances D->E.
+	void StartPilotPhaseFlow();
+	void PilotPhaseTick();
+	AActor* FindZoneActorByTag(const FName& Tag) const;
+	bool IsLocationInZone(const AActor* Zone, const FVector& Location) const;
+	AActor* FindCommandVehicleForPhaseFlow() const;
+
+	FTimerHandle PilotPhaseTimerHandle;
+	TWeakObjectPtr<AActor> PilotCommandVehicle;
+	bool bPilotPhaseFlowActive = false;
+	bool bPilotRallyAArrivalLogged = false;
+	bool bPilotTakeoverSeenOnAffected = false;
+	double PilotDisruptionOnsetWorldSeconds = -1.0;
+	int32 PilotAffectedFollowerID = 2;
+	TSet<int32> PilotWrongFollowersLogged;
+
 	// RA42A helpers
 	FString ScenarioPhaseToText(EESCROWScenarioPhase Phase) const;
 	FString TaskingStateToText(EESCROWTaskingState State) const;

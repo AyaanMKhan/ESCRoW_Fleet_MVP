@@ -130,6 +130,62 @@ enum class EESCROWMessageSeverity : uint8
 	Critical
 };
 
+// Operator-facing alert toast stack (top-right). Owned by UESCROWFleetSubsystem.
+UENUM(BlueprintType)
+enum class EESCROWNotificationKind : uint8
+{
+	Warning,
+	TakeoverRequest,
+	Report,
+	Info
+};
+
+UENUM(BlueprintType)
+enum class EESCROWNotificationState : uint8
+{
+	Active,
+	Acknowledged,
+	Expired
+};
+
+USTRUCT(BlueprintType)
+struct FESCROWNotification
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	int32 NotificationID = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	EESCROWNotificationKind Kind = EESCROWNotificationKind::Info;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	EESCROWMessageSeverity Severity = EESCROWMessageSeverity::Info;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	EESCROWNotificationState State = EESCROWNotificationState::Active;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	FString Title;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	FString Body;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	int32 FollowerID = 0;
+
+	// -1 when not tied to a mission report.
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	int32 ReportIndex = -1;
+
+	// HUD page name that counts as "checking" this alert (e.g. "F2", "REPORTS").
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	FString RelatedPage;
+
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW")
+	float CreatedWorldSeconds = 0.0f;
+};
+
 USTRUCT(BlueprintType)
 struct FESCROWFollowerStatus
 {

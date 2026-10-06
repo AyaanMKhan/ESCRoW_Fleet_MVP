@@ -1262,6 +1262,17 @@ void UESCROWEventLogSubsystem::NoteOperatorContext(const FString& Page, int32 Se
 {
 	if (!Page.IsEmpty() && Page != TEXT("UNSET"))
 	{
+		// Opening the page an alert concerns counts as checking it.
+		if (!Page.Equals(LastKnownActivePage, ESearchCase::IgnoreCase) && Page != TEXT("NoConsolePage"))
+		{
+			if (const UWorld* World = GetWorld())
+			{
+				if (UESCROWFleetSubsystem* Fleet = World->GetSubsystem<UESCROWFleetSubsystem>())
+				{
+					Fleet->AcknowledgeNotificationsForPage(Page);
+				}
+			}
+		}
 		LastKnownActivePage = Page;
 		// Follower pages are named F<n>; the page itself identifies the selected follower.
 		if (Page.Len() >= 2 && Page[0] == TCHAR('F') && FChar::IsDigit(Page[1]))

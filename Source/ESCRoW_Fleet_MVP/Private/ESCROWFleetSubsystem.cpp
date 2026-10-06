@@ -4,6 +4,7 @@
 #include "ESCROWEventLogSubsystem.h"
 #include "Engine/World.h"
 #include "Engine/GameInstance.h"
+#include "TimerManager.h"
 
 UESCROWEventLogSubsystem* UESCROWFleetSubsystem::GetEventLog() const
 {
@@ -21,6 +22,7 @@ void UESCROWFleetSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void UESCROWFleetSubsystem::ResetFleetState()
 {
 	FollowerStatuses.Reset();
+	Notifications.Reset();
 
 	for (int32 FollowerID = 1; FollowerID <= 4; ++FollowerID)
 	{
@@ -575,6 +577,13 @@ void UESCROWFleetSubsystem::AddHUDMessage(EESCROWMessageSource Source, EESCROWMe
 			*SourceStr, *SeverityStr, bRequiresAcknowledgement ? TEXT("true") : TEXT("false"), *NewMessage.MessageID);
 		EventLog->RecordScenarioEventSimple(FString(), TEXT("HUDMessage"), MessageText, FString(), TargetFollowerID, TEXT("Unspecified"), PayloadJSON);
 	}
+
+	if (Severity == EESCROWMessageSeverity::Critical)
+	{
+		PostNotification(EESCROWNotificationKind::Warning, EESCROWMessageSeverity::Critical, TargetFollowerID,
+			TEXT("CRITICAL ALERT"), MessageText,
+			TargetFollowerID > 0 ? FString::Printf(TEXT("F%d"), TargetFollowerID) : FString());
+	}
 }
 
 void UESCROWFleetSubsystem::GenerateInitialMissionReports(const FString& ScenarioName, float MissionTime)
@@ -651,4 +660,191 @@ bool UESCROWFleetSubsystem::AcknowledgeMissionReport(int32 Index)
 	}
 
 	return true;
+}
+
+// =============================== Alert toast stack ===============================
+
+int32 UESCROWFleetSubsystem::PostNotification(EESCROWNotificationKind Kind, EESCROWMessageSeverity Severity, int32 FollowerID, const FString& Title, const FString& Body, const FString& RelatedPage, int32 ReportIndex)
+{
+	FESCROWNotification N;
+	N.NotificationID = ++NotificationCounter;
+	N.Kind = Kind;
+	N.Severity = Severity;
+	N.State = EESCROWNotificationState::Active;
+	N.Title = Title;
+	N.Body = Body;
+	N.FollowerID = FollowerID;
+	N.ReportIndex = ReportIndex;
+	N.RelatedPage = RelatedPage;
+	N.CreatedWorldSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	Notifications.Add(N);
+
+	// Keep the history bounded; only ever drop finished entries.
+	while (Notifications.Num() > 100 && Notifications[0].State != EESCROWNotificationState::Active)
+	{
+		Notifications.RemoveAt(0);
+	}
+
+	LogNotificationEvent(TEXT("AlertPosted"), N, FString(), 0.0f);
+
+	if (UWorld* World = GetWorld())
+	{
+		if (!World->GetTimerManager().IsTimerActive(NotificationTimerHandle))
+		{
+			World->GetTimerManager().SetTimer(NotificationTimerHandle, this, &UESCROWFleetSubsystem::NotificationTick, 1.0f, true);
+		}
+	}
+	return N.NotificationID;
+}
+
+void UESCROWFleetSubsystem::LogNotificationEvent(const TCHAR* EventType, const FESCROWNotification& Notification, const FString& Method, float AgeSeconds) const
+{
+	UESCROWEventLogSubsystem* EventLog = GetEventLog();
+	if (!EventLog)
+	{
+		return;
+	}
+	const UEnum* KindEnum = StaticEnum<EESCROWNotificationKind>();
+	const FString KindStr = KindEnum ? KindEnum->GetNameStringByValue(static_cast<int64>(Notification.Kind)) : FString();
+	const FString Payload = FString::Printf(TEXT("{\"NotificationID\":%d,\"Kind\":\"%s\",\"FollowerID\":%d,\"ReportIndex\":%d,\"RelatedPage\":\"%s\",\"Method\":\"%s\",\"AgeSeconds\":%.2f}"),
+		Notification.NotificationID, *KindStr, Notification.FollowerID, Notification.ReportIndex, *Notification.RelatedPage, *Method, AgeSeconds);
+	EventLog->RecordScenarioEventSimple(FString(), EventType, Notification.Title, FString(), Notification.FollowerID, TEXT("Unspecified"), Payload);
+}
+
+bool UESCROWFleetSubsystem::AcknowledgeNotification(int32 NotificationID, const FString& Method)
+{
+	for (FESCROWNotification& N : Notifications)
+	{
+		if (N.NotificationID == NotificationID && N.State == EESCROWNotificationState::Active)
+		{
+			N.State = EESCROWNotificationState::Acknowledged;
+			const float Age = (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f) - N.CreatedWorldSeconds;
+			LogNotificationEvent(TEXT("AlertAcknowledged"), N, Method, Age);
+			return true;
+		}
+	}
+	return false;
+}
+
+bool UESCROWFleetSubsystem::AcknowledgeOldestNotification(const FString& Method)
+{
+	for (const FESCROWNotification& N : Notifications)
+	{
+		if (N.State == EESCROWNotificationState::Active)
+		{
+			return AcknowledgeNotification(N.NotificationID, Method);
+		}
+	}
+	return false;
+}
+
+int32 UESCROWFleetSubsystem::AcknowledgeNotificationsForPage(const FString& PageName)
+{
+	if (PageName.IsEmpty())
+	{
+		return 0;
+	}
+	TArray<int32> ToAck;
+	for (const FESCROWNotification& N : Notifications)
+	{
+		if (N.State == EESCROWNotificationState::Active && N.RelatedPage.Equals(PageName, ESearchCase::IgnoreCase))
+		{
+			ToAck.Add(N.NotificationID);
+		}
+	}
+	for (int32 ID : ToAck)
+	{
+		AcknowledgeNotification(ID, TEXT("PageOpened"));
+	}
+	return ToAck.Num();
+}
+
+void UESCROWFleetSubsystem::NotificationTick()
+{
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	// One alert per tick, oldest first: stacked alerts clear one at a time.
+	for (FESCROWNotification& N : Notifications)
+	{
+		if (N.State == EESCROWNotificationState::Active && (Now - N.CreatedWorldSeconds) >= NotificationAutoClearSeconds)
+		{
+			N.State = EESCROWNotificationState::Expired;
+			LogNotificationEvent(TEXT("AlertExpired"), N, TEXT("AutoClear"), Now - N.CreatedWorldSeconds);
+			break;
+		}
+	}
+}
+
+int32 UESCROWFleetSubsystem::GetActiveNotificationCount() const
+{
+	int32 Count = 0;
+	for (const FESCROWNotification& N : Notifications)
+	{
+		if (N.State == EESCROWNotificationState::Active) { ++Count; }
+	}
+	return Count;
+}
+
+const FESCROWNotification* UESCROWFleetSubsystem::GetActiveBySlot(int32 SlotIndex) const
+{
+	if (SlotIndex < 0)
+	{
+		return nullptr;
+	}
+	int32 Seen = 0;
+	for (int32 i = Notifications.Num() - 1; i >= 0; --i)
+	{
+		if (Notifications[i].State == EESCROWNotificationState::Active)
+		{
+			if (Seen == SlotIndex)
+			{
+				return &Notifications[i];
+			}
+			++Seen;
+		}
+	}
+	return nullptr;
+}
+
+FString UESCROWFleetSubsystem::GetNotificationSlotText(int32 SlotIndex) const
+{
+	const FESCROWNotification* N = GetActiveBySlot(SlotIndex);
+	if (!N)
+	{
+		return FString();
+	}
+	const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	const int32 Remaining = FMath::Max(0, FMath::CeilToInt(NotificationAutoClearSeconds - (Now - N->CreatedWorldSeconds)));
+	return FString::Printf(TEXT("%s\n%s\n[Y] acknowledge  -  clears in %ds"), *N->Title, *N->Body, Remaining);
+}
+
+int32 UESCROWFleetSubsystem::GetNotificationSlotSeverity(int32 SlotIndex) const
+{
+	const FESCROWNotification* N = GetActiveBySlot(SlotIndex);
+	return N ? static_cast<int32>(N->Severity) : -1;
+}
+
+int32 UESCROWFleetSubsystem::AddMissionReport(const FString& ReportID, const FString& Title, const FString& Source, const FString& BodyText, bool bRequiresAck, bool bNotify)
+{
+	FESCROWMissionReport Report;
+	Report.ReportID = ReportID;
+	Report.ReportType = EESCROWReportType::Text;
+	Report.Title = Title;
+	Report.Source = Source;
+	Report.BodyText = BodyText;
+	Report.ReceivedMissionTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	Report.bRequiresAck = bRequiresAck;
+	Report.bAcknowledged = false;
+	const int32 Index = MissionReports.Add(Report);
+
+	if (UESCROWEventLogSubsystem* EventLog = GetEventLog())
+	{
+		EventLog->RecordReportFieldSimple(Report.ReportID, TEXT("Text"), TEXT("Generated"), Report.Title, FString(), -1, FString());
+	}
+
+	if (bNotify)
+	{
+		PostNotification(EESCROWNotificationKind::Report, EESCROWMessageSeverity::Info, 0,
+			FString::Printf(TEXT("NEW REPORT: %s"), *Title), BodyText, TEXT("REPORTS"), Index);
+	}
+	return Index;
 }
