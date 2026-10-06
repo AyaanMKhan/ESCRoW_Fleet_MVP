@@ -73,7 +73,9 @@ enum class EESCROWFollowerState : uint8
 	AwaitingTakeover,
 	DirectControl,
 	ReturningToAutonomy,
-	Recovered
+	Recovered,
+	// Appended last so existing serialized enum values stay stable.
+	HoldingPosition
 };
 
 UENUM(BlueprintType)
