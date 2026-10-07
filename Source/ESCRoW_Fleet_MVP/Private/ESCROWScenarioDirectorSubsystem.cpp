@@ -15,6 +15,9 @@
 #include "Engine/Engine.h"
 #include "Components/SceneComponent.h"
 #include "Components/TextRenderComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/StructOnScope.h"
 
 namespace
@@ -1667,6 +1670,19 @@ void UESCROWScenarioDirectorSubsystem::StartPilotPhaseFlow()
 	bPilotRecoveryReached = false;
 	PilotLastFaultReassertSeconds = -1.0;
 	PilotClearRecoveryPoint();
+	PilotClearPlanMarkers();
+	bPilotPlanRepairPosted = false;
+	bPilotCloseoutPosted = false;
+	PilotPlanRepairOnsetSeconds = -1.0;
+	PilotCloseoutOnsetSeconds = -1.0;
+	PilotValidateAttempt = 0;
+	bPilotValidatePassed = false;
+	bPilotFirstAssignmentLogged = false;
+	PilotLastLoggedAssignment.Reset();
+	PilotValidateReportID.Reset();
+	PilotAuthorizeReportID.Reset();
+	PilotCloseoutReportID.Reset();
+	for (int32 i = 0; i < PilotSlotCount; ++i) { PilotSlotBlocked[i] = false; PilotSlotLocations[i] = FVector::ZeroVector; }
 	World->GetTimerManager().SetTimer(PilotPhaseTimerHandle, this, &UESCROWScenarioDirectorSubsystem::PilotPhaseTick, PilotPhaseTickSeconds, true);
 }
 
@@ -1788,6 +1804,14 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 
 	case EESCROWScenarioPhase::PhaseD_TakeoverIntervention:
 		PilotTickFault(Fleet, EventLog, World);
+		break;
+
+	case EESCROWScenarioPhase::PhaseE_PlanRepair:
+		PilotTickPlanRepair(Fleet, EventLog, World, CVLocation);
+		break;
+
+	case EESCROWScenarioPhase::PhaseF_Closeout:
+		PilotTickCloseout(Fleet, EventLog, World);
 		break;
 
 	default:
@@ -2057,4 +2081,452 @@ int32 UESCROWScenarioDirectorSubsystem::PilotReadConvoyIntArray(const TCHAR* Arr
 	}
 	FScriptArrayHelper Helper(ArrayProp, ArrayProp->ContainerPtrToValuePtr<void>(CTM));
 	return Helper.IsValidIndex(Index) ? Inner->GetPropertyValue(Helper.GetRawPtr(Index)) : Default;
+}
+
+// =============================== Pilot Phase E (plan repair) / Phase F (closeout) ===============================
+
+namespace
+{
+	const FName RallyMarkerTagC(TEXT("ESCROW_RallyMarker_C"));
+	constexpr double PlanTriggerRadiusCm = 25000.0;     // command vehicle within 250 m of Rally C
+	constexpr double PlanAltMatchRadiusCm = 2200.0;     // a waypoint this close to an ALT position counts as assigned there
+	constexpr double PlanBlockedClearRadiusCm = 3000.0; // ... and must stay this far from every blocked slot
+}
+
+bool UESCROWScenarioDirectorSubsystem::PilotReadConvoyVectorArray(const TCHAR* ArrayName, int32 Index, FVector& Out)
+{
+	AActor* CTM = PilotFindConvoyManager();
+	if (!CTM)
+	{
+		return false;
+	}
+	const FArrayProperty* ArrayProp = CastField<FArrayProperty>(CTM->GetClass()->FindPropertyByName(ArrayName));
+	const FStructProperty* Inner = ArrayProp ? CastField<FStructProperty>(ArrayProp->Inner) : nullptr;
+	if (!ArrayProp || !Inner || Inner->Struct != TBaseStructure<FVector>::Get())
+	{
+		return false;
+	}
+	FScriptArrayHelper Helper(ArrayProp, ArrayProp->ContainerPtrToValuePtr<void>(CTM));
+	if (!Helper.IsValidIndex(Index))
+	{
+		return false;
+	}
+	Out = *reinterpret_cast<const FVector*>(Helper.GetRawPtr(Index));
+	return true;
+}
+
+bool UESCROWScenarioDirectorSubsystem::PilotReportAcknowledged(UESCROWFleetSubsystem* Fleet, const FString& ReportID) const
+{
+	if (!Fleet || ReportID.IsEmpty())
+	{
+		return false;
+	}
+	for (const FESCROWMissionReport& Report : Fleet->MissionReports)
+	{
+		if (Report.ReportID == ReportID)
+		{
+			return Report.bAcknowledged;
+		}
+	}
+	return false;
+}
+
+double UESCROWScenarioDirectorSubsystem::PilotFindGroundZ(const FVector& Location, double Fallback) const
+{
+	if (const UWorld* World = GetWorld())
+	{
+		FHitResult Hit;
+		FCollisionQueryParams Query(SCENE_QUERY_STAT(PilotGroundZ), false);
+		if (World->LineTraceSingleByChannel(Hit, Location + FVector(0.0, 0.0, 20000.0), Location - FVector(0.0, 0.0, 20000.0), ECC_Visibility, Query))
+		{
+			return Hit.ImpactPoint.Z;
+		}
+	}
+	return Fallback;
+}
+
+AActor* UESCROWScenarioDirectorSubsystem::PilotSpawnPlanMarker(const FVector& Location, const FString& Label, const FColor& Color, bool bBlocker, const FName& Tag, double LabelYaw)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* Marker = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform(FRotator::ZeroRotator, Location), Params);
+	if (!Marker)
+	{
+		return nullptr;
+	}
+	USceneComponent* Root = NewObject<USceneComponent>(Marker, TEXT("PlanRoot"));
+	Marker->SetRootComponent(Root);
+	Root->SetWorldLocation(Location);
+	Root->RegisterComponent();
+
+	if (UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")))
+	{
+		UStaticMeshComponent* Mesh = NewObject<UStaticMeshComponent>(Marker, TEXT("PlanMesh"));
+		Mesh->SetStaticMesh(Cube);
+		Mesh->SetupAttachment(Root);
+		// A blocked slot is a physical barrier the followers cannot drive through; an open slot or
+		// alternate is a thin flat pad.
+		Mesh->SetRelativeScale3D(bBlocker ? FVector(10.0, 10.0, 4.0) : FVector(7.0, 7.0, 0.05));
+		Mesh->SetRelativeLocation(FVector(0.0, 0.0, bBlocker ? 200.0 : 8.0));
+		if (bBlocker)
+		{
+			Mesh->SetCollisionProfileName(TEXT("BlockAll"));
+		}
+		else
+		{
+			Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+		Mesh->RegisterComponent();
+		if (UMaterialInterface* Base = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial")))
+		{
+			if (UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Base, Mesh))
+			{
+				MID->SetVectorParameterValue(TEXT("Color"), FLinearColor::FromSRGBColor(Color));
+				Mesh->SetMaterial(0, MID);
+			}
+		}
+	}
+
+	UTextRenderComponent* Text = NewObject<UTextRenderComponent>(Marker, TEXT("PlanLabel"));
+	Text->SetupAttachment(Root);
+	Text->SetText(FText::FromString(Label));
+	Text->SetTextRenderColor(Color);
+	Text->SetWorldSize(450.0f);
+	Text->SetHorizontalAlignment(EHTA_Center);
+	Text->SetVerticalAlignment(EVRTA_TextCenter);
+	Text->SetRelativeLocation(FVector(0.0, 0.0, bBlocker ? 750.0 : 400.0));
+	Text->SetRelativeRotation(FRotator(0.0, LabelYaw, 0.0));
+	Text->bNeverDistanceCull = true;
+	Text->RegisterComponent();
+
+	if (!Tag.IsNone())
+	{
+		Marker->Tags.Add(Tag);
+	}
+	PilotPlanMarkers.Add(Marker);
+	return Marker;
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotClearPlanMarkers()
+{
+	for (TWeakObjectPtr<AActor>& Marker : PilotPlanMarkers)
+	{
+		if (AActor* Actor = Marker.Get())
+		{
+			Actor->Destroy();
+		}
+	}
+	PilotPlanMarkers.Reset();
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotPostValidateReport(UESCROWFleetSubsystem* Fleet, bool bNotify)
+{
+	++PilotValidateAttempt;
+	PilotValidateReportID = FString::Printf(TEXT("RPT-0005-PLAN-VALIDATE-%d"), PilotValidateAttempt);
+	Fleet->AddMissionReport(PilotValidateReportID, TEXT("Validate Plan"), TEXT("ScenarioDirector"),
+		TEXT("Confirm this report once WOLF and LYNX each have a waypoint on a different ALT position. The plan is then checked and you are told if anything is still wrong."), true, bNotify);
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotPostPlanRepair(UESCROWFleetSubsystem* Fleet, UESCROWEventLogSubsystem* EventLog, UWorld* World, const FVector& CVLocation)
+{
+	bPilotPlanRepairPosted = true;
+	PilotPlanRepairOnsetSeconds = World->GetTimeSeconds();
+	bPilotValidatePassed = false;
+	bPilotFirstAssignmentLogged = false;
+	PilotLastLoggedAssignment.Reset();
+
+	const AActor* CMarker = FindZoneActorByTag(RallyMarkerTagC);
+	const AActor* BZone = FindZoneActorByTag(ZoneTag_RallyB);
+	const FVector C = CMarker ? CMarker->GetActorLocation() : CVLocation;
+	const FVector B = BZone ? BZone->GetActorLocation() : C - FVector(0.0, 30000.0, 0.0);
+	FVector Dir(C.X - B.X, C.Y - B.Y, 0.0);
+	Dir = Dir.GetSafeNormal();
+	if (Dir.IsNearlyZero())
+	{
+		Dir = FVector(0.0, 1.0, 0.0);
+	}
+	// Facing Dir, right is (-Dir.Y, Dir.X): with Dir = +Y the right-hand side is -X.
+	const FVector Right(-Dir.Y, Dir.X, 0.0);
+	const double LabelYaw = Dir.Rotation().Yaw - 180.0;
+	const double GroundZ = PilotFindGroundZ(FVector(C.X, C.Y, CVLocation.Z), CVLocation.Z - 100.0);
+
+	// 60 m between slots so the labels and barriers read as separate positions.
+	const double SlotOffsetsCm[PilotSlotCount] = { -9000.0, -3000.0, 3000.0, 9000.0 };
+	int32 BlockedFollowers[2] = { 2, 3 };
+	for (int32 i = 0; i < PilotSlotCount; ++i)
+	{
+		FVector Loc = C + Right * SlotOffsetsCm[i];
+		Loc.Z = GroundZ;
+		PilotSlotLocations[i] = Loc;
+		PilotSlotBlocked[i] = (i + 1 == BlockedFollowers[0] || i + 1 == BlockedFollowers[1]);
+	}
+	for (int32 k = 0; k < PilotAltCount; ++k)
+	{
+		FVector Loc = C + Dir * 14000.0 + Right * (k == 0 ? -5000.0 : 5000.0);
+		Loc.Z = GroundZ;
+		PilotAltLocations[k] = Loc;
+	}
+
+	int32 BlockedSeen = 0;
+	for (int32 i = 0; i < PilotSlotCount; ++i)
+	{
+		const FString Name = ESCROWFollowerCallsign(i + 1);
+		if (PilotSlotBlocked[i])
+		{
+			++BlockedSeen;
+			PilotSpawnPlanMarker(PilotSlotLocations[i], FString::Printf(TEXT("P%d %s\nBLOCKED"), i + 1, *Name), FColor(235, 45, 45), true,
+				FName(*FString::Printf(TEXT("ESCROW_RallyMarker_X%d"), BlockedSeen)), LabelYaw);
+		}
+		else
+		{
+			PilotSpawnPlanMarker(PilotSlotLocations[i], FString::Printf(TEXT("P%d %s"), i + 1, *Name), FColor(90, 225, 100), false, NAME_None, LabelYaw);
+		}
+	}
+	for (int32 k = 0; k < PilotAltCount; ++k)
+	{
+		PilotSpawnPlanMarker(PilotAltLocations[k], FString::Printf(TEXT("ALT %d"), k + 1), FColor(70, 205, 255), false,
+			FName(*FString::Printf(TEXT("ESCROW_RallyMarker_ALT%d"), k + 1)), LabelYaw);
+	}
+
+	PostTasking(TEXT("TASK_E_PLAN_REPAIR"), TEXT("Reassign blocked Rally C positions and validate the plan"), EESCROWScenarioPhase::PhaseE_PlanRepair,
+		TEXT("ReassignBlockedPositionsAndValidate"), BlockedFollowers[0], TEXT("Invalid"), TEXT("PLAN_REPAIR_ONSET"));
+
+	const FString BlockedNames = FString::Printf(TEXT("%s and %s"), *ESCROWFollowerCallsign(BlockedFollowers[0]), *ESCROWFollowerCallsign(BlockedFollowers[1]));
+	LogScenarioEvent(TEXT("PlanRepairOnset"), BlockedFollowers[0], FString::Printf(TEXT("Rally C positions blocked for %s."), *BlockedNames));
+	if (EventLog)
+	{
+		EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("PlanRepairOnset"),
+			FString::Printf(TEXT("Rally C positions P%d and P%d blocked."), BlockedFollowers[0], BlockedFollowers[1]), ActiveTasking.TaskingID, BlockedFollowers[0], CurrentPlanValidity,
+			FString::Printf(TEXT("{\"BlockedSlots\":[%d,%d],\"Slots\":[\"%s\",\"%s\",\"%s\",\"%s\"],\"Alts\":[\"%s\",\"%s\"]}"), BlockedFollowers[0], BlockedFollowers[1],
+				*PilotSlotLocations[0].ToCompactString(), *PilotSlotLocations[1].ToCompactString(), *PilotSlotLocations[2].ToCompactString(), *PilotSlotLocations[3].ToCompactString(),
+				*PilotAltLocations[0].ToCompactString(), *PilotAltLocations[1].ToCompactString()));
+	}
+
+	Fleet->PostNotification(EESCROWNotificationKind::Warning, EESCROWMessageSeverity::Warning, BlockedFollowers[0], TEXT("RALLY C PLAN BLOCKED"),
+		FString::Printf(TEXT("The planned positions for %s are blocked. Reassign them to the ALT positions, then confirm the Validate Plan report."), *BlockedNames), TEXT("REPORTS"));
+	Fleet->AddMissionReport(TEXT("RPT-0004-PLAN-REPAIR"), TEXT("Rally C Plan Repair"), TEXT("ScenarioDirector"),
+		FString::Printf(TEXT("The convoy has reached Rally C. The plan was for %s to take positions P1, P2, P3 and P4 in a line. Positions P2 and P3 are blocked (red), so %s cannot use them.\n\nAssign %s a new position each: use the two cyan ALT positions beyond Rally C. On the GPS page, select the follower, place a waypoint on its ALT position and confirm it.\n\nWhen both are reassigned, confirm the Validate Plan report."),
+			*FString::Printf(TEXT("%s, %s, %s and %s"), *ESCROWFollowerCallsign(1), *ESCROWFollowerCallsign(2), *ESCROWFollowerCallsign(3), *ESCROWFollowerCallsign(4)), *BlockedNames, *BlockedNames), false, false);
+	PilotPostValidateReport(Fleet, false);
+}
+
+bool UESCROWScenarioDirectorSubsystem::PilotEvaluatePlan(FString& OutDetail)
+{
+	bool bAllOk = true;
+	TArray<int32> AltUsed;
+	OutDetail.Reset();
+	for (int32 f = 1; f <= PilotSlotCount; ++f)
+	{
+		if (!PilotSlotBlocked[f - 1])
+		{
+			continue;
+		}
+		const FString Name = ESCROWFollowerCallsign(f);
+		const int32 Mode = PilotReadConvoyIntArray(TEXT("PathModes"), f, -1);
+		FVector Target = FVector::ZeroVector;
+		FString Problem;
+		if (Mode != 4 || !PilotReadConvoyVectorArray(TEXT("ActiveTargetLocations"), f, Target))
+		{
+			Problem = TEXT("no new waypoint assigned");
+		}
+		else
+		{
+			int32 Alt = -1;
+			double AltDist = TNumericLimits<double>::Max();
+			for (int32 k = 0; k < PilotAltCount; ++k)
+			{
+				const double D = FVector::Dist2D(Target, PilotAltLocations[k]);
+				if (D < AltDist) { AltDist = D; Alt = k; }
+			}
+			bool bNearBlocked = false;
+			for (int32 s = 0; s < PilotSlotCount; ++s)
+			{
+				if (PilotSlotBlocked[s] && FVector::Dist2D(Target, PilotSlotLocations[s]) < PlanBlockedClearRadiusCm)
+				{
+					bNearBlocked = true;
+				}
+			}
+			if (bNearBlocked)
+			{
+				Problem = TEXT("waypoint is still on a blocked position");
+			}
+			else if (Alt < 0 || AltDist > PlanAltMatchRadiusCm)
+			{
+				Problem = TEXT("waypoint is not on an ALT position");
+			}
+			else if (AltUsed.Contains(Alt))
+			{
+				Problem = FString::Printf(TEXT("ALT %d is already used by another follower"), Alt + 1);
+			}
+			else
+			{
+				AltUsed.Add(Alt);
+			}
+		}
+		if (!Problem.IsEmpty())
+		{
+			bAllOk = false;
+			OutDetail += (OutDetail.IsEmpty() ? TEXT("") : TEXT("; ")) + FString::Printf(TEXT("%s: %s"), *Name, *Problem);
+		}
+	}
+	if (bAllOk)
+	{
+		OutDetail = TEXT("All blocked positions reassigned to distinct ALT positions.");
+	}
+	return bAllOk;
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotTickPlanRepair(UESCROWFleetSubsystem* Fleet, UESCROWEventLogSubsystem* EventLog, UWorld* World, const FVector& CVLocation)
+{
+	if (!bPilotPlanRepairPosted)
+	{
+		const AActor* CMarker = FindZoneActorByTag(RallyMarkerTagC);
+		if (CMarker && FVector::Dist2D(CMarker->GetActorLocation(), CVLocation) <= PlanTriggerRadiusCm)
+		{
+			PilotPostPlanRepair(Fleet, EventLog, World, CVLocation);
+		}
+		return;
+	}
+
+	const double Now = World->GetTimeSeconds();
+	auto LogEv = [&](const TCHAR* Type, int32 FollowerID, const FString& Text, const FString& Payload)
+	{
+		LogScenarioEvent(Type, FollowerID, Text);
+		if (EventLog)
+		{
+			EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), Type, Text, ActiveTasking.TaskingID, FollowerID, CurrentPlanValidity, Payload);
+		}
+	};
+	auto Clean = [](FString S) { S.ReplaceInline(TEXT("\""), TEXT("'")); return S; };
+
+	// Record every change to a blocked follower's assignment (what the operator did, and when).
+	for (int32 f = 1; f <= PilotSlotCount; ++f)
+	{
+		if (!PilotSlotBlocked[f - 1])
+		{
+			continue;
+		}
+		const int32 Mode = PilotReadConvoyIntArray(TEXT("PathModes"), f, -1);
+		FVector Target = FVector::ZeroVector;
+		const bool bHasTarget = (Mode == 4) && PilotReadConvoyVectorArray(TEXT("ActiveTargetLocations"), f, Target);
+		const FString Key = bHasTarget ? FString::Printf(TEXT("%d:%d:%d"), Mode, FMath::RoundToInt(Target.X / 100.0), FMath::RoundToInt(Target.Y / 100.0)) : FString::Printf(TEXT("%d"), Mode);
+		const FString* Last = PilotLastLoggedAssignment.Find(f);
+		if (Last && *Last == Key)
+		{
+			continue;
+		}
+		const bool bFirstSight = (Last == nullptr);
+		PilotLastLoggedAssignment.Add(f, Key);
+		if (bFirstSight || !bHasTarget)
+		{
+			continue;
+		}
+		int32 Alt = -1;
+		double AltDist = TNumericLimits<double>::Max();
+		for (int32 k = 0; k < PilotAltCount; ++k)
+		{
+			const double D = FVector::Dist2D(Target, PilotAltLocations[k]);
+			if (D < AltDist) { AltDist = D; Alt = k; }
+		}
+		LogEv(TEXT("PlanRepairAssignmentChanged"), f, FString::Printf(TEXT("%s given a waypoint."), *ESCROWFollowerCallsign(f)),
+			FString::Printf(TEXT("{\"Target\":\"%s\",\"NearestAlt\":%d,\"DistanceToNearestAltCm\":%.0f,\"SecondsSinceOnset\":%.2f}"), *Target.ToCompactString(), Alt + 1, AltDist, Now - PilotPlanRepairOnsetSeconds));
+		if (!bPilotFirstAssignmentLogged)
+		{
+			bPilotFirstAssignmentLogged = true;
+			AcknowledgeActiveTasking(TEXT("OperatorAssignedWaypoint"));
+			LogEv(TEXT("PlanRepairFirstAssignment"), f, TEXT("First reassignment."), FString::Printf(TEXT("{\"LatencySeconds\":%.2f}"), Now - PilotPlanRepairOnsetSeconds));
+		}
+	}
+
+	if (!bPilotValidatePassed)
+	{
+		if (PilotReportAcknowledged(Fleet, PilotValidateReportID))
+		{
+			FString Detail;
+			const bool bOk = PilotEvaluatePlan(Detail);
+			LogEv(TEXT("PlanValidationResult"), 0, bOk ? TEXT("Plan validation passed.") : TEXT("Plan validation failed."),
+				FString::Printf(TEXT("{\"Attempt\":%d,\"Valid\":%s,\"Detail\":\"%s\",\"SecondsSinceOnset\":%.2f}"), PilotValidateAttempt, bOk ? TEXT("true") : TEXT("false"), *Clean(Detail), Now - PilotPlanRepairOnsetSeconds));
+			if (bOk)
+			{
+				bPilotValidatePassed = true;
+				SetPlanValidity(TEXT("Valid"), TEXT("PilotTruthValid"));
+				ValidateActiveTasking(TEXT("PilotValidateReport"));
+				PilotAuthorizeReportID = TEXT("RPT-0006-PLAN-AUTHORIZE");
+				Fleet->AddMissionReport(PilotAuthorizeReportID, TEXT("Authorize Plan"), TEXT("ScenarioDirector"),
+					TEXT("The checked plan is valid. Confirm this report to authorize it and send the convoy to its final positions."), true, false);
+				Fleet->PostNotification(EESCROWNotificationKind::Info, EESCROWMessageSeverity::Info, 0, TEXT("PLAN VALID"),
+					TEXT("Confirm the Authorize Plan report to execute it."), TEXT("REPORTS"));
+			}
+			else
+			{
+				Fleet->PostNotification(EESCROWNotificationKind::Warning, EESCROWMessageSeverity::Warning, 0, TEXT("PLAN NOT VALID"), Detail, TEXT("GPS"));
+				PilotPostValidateReport(Fleet, false);
+			}
+		}
+		return;
+	}
+
+	if (PilotReportAcknowledged(Fleet, PilotAuthorizeReportID))
+	{
+		FString Detail;
+		const bool bOk = PilotEvaluatePlan(Detail);
+		if (bOk)
+		{
+			AuthorizeActiveTasking(TEXT("PilotAuthorizeReport"));
+			LogEv(TEXT("PlanAuthorized"), 0, TEXT("Plan authorized."), FString::Printf(TEXT("{\"SecondsSinceOnset\":%.2f,\"ValidateAttempts\":%d}"), Now - PilotPlanRepairOnsetSeconds, PilotValidateAttempt));
+			Fleet->PostNotification(EESCROWNotificationKind::Info, EESCROWMessageSeverity::Info, 0, TEXT("PLAN AUTHORIZED"), TEXT("The convoy is taking its final positions."), TEXT("GPS"));
+			CompleteActiveTasking(TEXT("PlanRepairAuthorized"));
+		}
+		else
+		{
+			// Changed after validation: the plan is no longer valid, so it must be checked again.
+			bPilotValidatePassed = false;
+			SetPlanValidity(TEXT("Invalid"), TEXT("PilotTruthInvalid"));
+			LogEv(TEXT("PlanAuthorizedWhileInvalid"), 0, TEXT("Authorize confirmed but plan no longer valid."), FString::Printf(TEXT("{\"Detail\":\"%s\"}"), *Clean(Detail)));
+			PilotAuthorizeReportID.Reset();
+			Fleet->PostNotification(EESCROWNotificationKind::Warning, EESCROWMessageSeverity::Warning, 0, TEXT("PLAN NOT VALID"), Detail, TEXT("GPS"));
+			PilotPostValidateReport(Fleet, false);
+		}
+	}
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotTickCloseout(UESCROWFleetSubsystem* Fleet, UESCROWEventLogSubsystem* EventLog, UWorld* World)
+{
+	const double Now = World->GetTimeSeconds();
+	if (!bPilotCloseoutPosted)
+	{
+		bPilotCloseoutPosted = true;
+		PilotCloseoutOnsetSeconds = Now;
+		const int32 Residual = Fleet->GetActiveNotificationCount();
+		PostTasking(TEXT("TASK_F_CLOSEOUT"), TEXT("Confirm readiness and close out"), EESCROWScenarioPhase::PhaseF_Closeout, TEXT("ConfirmCloseout"), 0, TEXT("Valid"), TEXT("CLOSEOUT_ONSET"));
+		PilotCloseoutReportID = TEXT("RPT-0007-CLOSEOUT");
+		Fleet->AddMissionReport(PilotCloseoutReportID, TEXT("Closeout"), TEXT("ScenarioDirector"),
+			TEXT("The plan is authorized and the convoy is in its final positions. Check the Fleet Status report and clear any remaining alerts (press Y). Then confirm this report to close out the run."), true, true);
+		LogScenarioEvent(TEXT("CloseoutOnset"), 0, TEXT("Closeout posted."));
+		if (EventLog)
+		{
+			EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("CloseoutOnset"), TEXT("Closeout report posted."), ActiveTasking.TaskingID, 0, CurrentPlanValidity,
+				FString::Printf(TEXT("{\"ActiveAlerts\":%d}"), Residual));
+		}
+		return;
+	}
+
+	if (PilotReportAcknowledged(Fleet, PilotCloseoutReportID))
+	{
+		const int32 Residual = Fleet->GetActiveNotificationCount();
+		LogScenarioEvent(TEXT("CloseoutConfirmed"), 0, FString::Printf(TEXT("Closeout confirmed with %d active alerts."), Residual));
+		if (EventLog)
+		{
+			EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("CloseoutConfirmed"), TEXT("Closeout confirmed."), ActiveTasking.TaskingID, 0, CurrentPlanValidity,
+				FString::Printf(TEXT("{\"ResidualWarnings\":%d,\"SecondsSinceOnset\":%.2f}"), Residual, Now - PilotCloseoutOnsetSeconds));
+		}
+		bPilotPhaseFlowActive = false;
+		World->GetTimerManager().ClearTimer(PilotPhaseTimerHandle);
+		CompleteActiveTasking(TEXT("CloseoutConfirmed"));
+	}
 }

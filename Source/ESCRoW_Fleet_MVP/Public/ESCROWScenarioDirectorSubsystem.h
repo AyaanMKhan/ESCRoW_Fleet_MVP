@@ -380,6 +380,40 @@ private:
 	void PilotReassertFault(UESCROWFleetSubsystem* Fleet, UWorld* World);
 	void PilotTickFault(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
 
+	// Pilot Phase E (Rally C plan repair) and Phase F (closeout). On reaching Rally C the
+	// planned formation slots appear, two of them blocked; the operator reassigns the
+	// affected followers to alternate positions (GPS waypoints), then confirms the
+	// "validate" and "authorize" reports. Validity is judged here from real waypoint
+	// positions, never from a UI button.
+	static constexpr int32 PilotSlotCount = 4;
+	static constexpr int32 PilotAltCount = 2;
+	bool bPilotPlanRepairPosted = false;
+	bool bPilotCloseoutPosted = false;
+	double PilotPlanRepairOnsetSeconds = -1.0;
+	double PilotCloseoutOnsetSeconds = -1.0;
+	int32 PilotValidateAttempt = 0;
+	bool bPilotValidatePassed = false;
+	bool bPilotFirstAssignmentLogged = false;
+	FVector PilotSlotLocations[PilotSlotCount];
+	bool PilotSlotBlocked[PilotSlotCount];
+	FVector PilotAltLocations[PilotAltCount];
+	TArray<TWeakObjectPtr<AActor>> PilotPlanMarkers;
+	TMap<int32, FString> PilotLastLoggedAssignment;
+	FString PilotValidateReportID;
+	FString PilotAuthorizeReportID;
+	FString PilotCloseoutReportID;
+
+	void PilotTickPlanRepair(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World, const FVector& CVLocation);
+	void PilotTickCloseout(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
+	void PilotPostPlanRepair(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World, const FVector& CVLocation);
+	void PilotPostValidateReport(UESCROWFleetSubsystem* Fleet, bool bNotify);
+	bool PilotEvaluatePlan(FString& OutDetail);
+	bool PilotReportAcknowledged(UESCROWFleetSubsystem* Fleet, const FString& ReportID) const;
+	bool PilotReadConvoyVectorArray(const TCHAR* ArrayName, int32 Index, FVector& Out);
+	AActor* PilotSpawnPlanMarker(const FVector& Location, const FString& Label, const FColor& Color, bool bBlocker, const FName& Tag, double LabelYaw);
+	void PilotClearPlanMarkers();
+	double PilotFindGroundZ(const FVector& Location, double Fallback) const;
+
 	// RA42A helpers
 	FString ScenarioPhaseToText(EESCROWScenarioPhase Phase) const;
 	FString TaskingStateToText(EESCROWTaskingState State) const;
