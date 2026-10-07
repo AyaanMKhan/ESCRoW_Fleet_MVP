@@ -247,10 +247,29 @@ void UESCROWScenarioDirectorSubsystem::TickServiceCheck()
 
 	if (ServiceCheckElapsedSeconds >= ServiceCheckTimeoutSeconds)
 	{
-		ClearServiceCheckTimer();
-		MarkScenarioRuntimeFailed(FString::Printf(
-			TEXT("Fleet refs did not reach 5/5 within timeout (Fleet=%d/5 after %.1fs)."),
-			RuntimeFleetValidCount, ServiceCheckElapsedSeconds));
+		// Record the failure once, but keep polling: a vehicle that registers late (observed
+		// on the first run after an editor restart) must still start the scenario instead of
+		// leaving the whole run without phases. The Ready branch above clears the timer.
+		if (ScenarioRuntimeState != EESCROWScenarioRuntimeState::Failed)
+		{
+			// Name the followers that never registered so a repeat is diagnosable from the log.
+			FString Missing;
+			if (const UESCROWFleetSubsystem* FleetForDiag = GetFleet())
+			{
+				for (int32 Id = 1; Id <= 4; ++Id)
+				{
+					bool bFound = false;
+					for (const FESCROWFollowerStatus& Status : FleetForDiag->FollowerStatuses)
+					{
+						if (Status.FollowerID == Id && IsValid(Status.ActorRef)) { bFound = true; break; }
+					}
+					if (!bFound) { Missing += FString::Printf(TEXT("F%d "), Id); }
+				}
+			}
+			MarkScenarioRuntimeFailed(FString::Printf(
+				TEXT("Fleet refs did not reach 5/5 within timeout (Fleet=%d/5 after %.1fs). Followers not registered: [%s]. Still polling."),
+				RuntimeFleetValidCount, ServiceCheckElapsedSeconds, *Missing.TrimEnd()));
+		}
 		return;
 	}
 
