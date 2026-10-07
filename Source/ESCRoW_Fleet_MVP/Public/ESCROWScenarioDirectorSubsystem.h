@@ -414,6 +414,13 @@ private:
 	void PilotClearPlanMarkers();
 	double PilotFindGroundZ(const FVector& Location, double Fallback) const;
 
+	// Startup nav self-check: logs the live nav agent size and whether each follower can
+	// path to the command vehicle (waits for the dynamic nav mesh to finish building).
+	void PilotRunNavDiagnostics();
+	FTimerHandle PilotNavDiagTimerHandle;
+	int32 PilotNavDiagAttempts = 0;
+	int32 PilotNavDiagRepeats = 0;
+
 	// RA42A helpers
 	FString ScenarioPhaseToText(EESCROWScenarioPhase Phase) const;
 	FString TaskingStateToText(EESCROWTaskingState State) const;

@@ -16,6 +16,10 @@ public class ESCRoW_Fleet_MVP : ModuleRules
 		// component API, not vendor (DD_Vehicles_Basic) graph logic.
 		PrivateDependencyModuleNames.AddRange(new string[] { "ChaosVehicles" });
 
+		// NavigationSystem: the Director's startup nav self-check reads the live nav mesh
+		// agent size and tests real follower paths (see PilotRunNavDiagnostics).
+		PrivateDependencyModuleNames.AddRange(new string[] { "NavigationSystem" });
+
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 		

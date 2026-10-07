@@ -15,6 +15,9 @@
 #include "Engine/Engine.h"
 #include "Components/SceneComponent.h"
 #include "Components/TextRenderComponent.h"
+#include "NavigationSystem.h"
+#include "NavigationPath.h"
+#include "NavMesh/RecastNavMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -301,6 +304,127 @@ void UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeReady()
 	}
 
 	StartPilotPhaseFlow();
+
+	// Give the dynamic nav mesh time to build before testing paths.
+	if (UWorld* World = GetWorld())
+	{
+		PilotNavDiagAttempts = 0;
+		PilotNavDiagRepeats = 0;
+		World->GetTimerManager().SetTimer(PilotNavDiagTimerHandle, this, &UESCROWScenarioDirectorSubsystem::PilotRunNavDiagnostics, 4.0f, false);
+	}
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotRunNavDiagnostics()
+{
+	UWorld* World = GetWorld();
+	UNavigationSystemV1* NavSys = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
+	UESCROWEventLogSubsystem* EventLog = GetEventLog();
+	if (!World || !NavSys)
+	{
+		LogScenarioEvent(TEXT("NavDiagnostics"), 0, TEXT("No navigation system in this world."));
+		return;
+	}
+	if (NavSys->IsNavigationBuildInProgress() && PilotNavDiagAttempts < 15)
+	{
+		++PilotNavDiagAttempts;
+		World->GetTimerManager().SetTimer(PilotNavDiagTimerHandle, this, &UESCROWScenarioDirectorSubsystem::PilotRunNavDiagnostics, 2.0f, false);
+		return;
+	}
+
+	FString Agents;
+	int32 NavCount = 0;
+	for (ANavigationData* Nav : NavSys->NavDataSet)
+	{
+		if (const ARecastNavMesh* Recast = Cast<ARecastNavMesh>(Nav))
+		{
+			++NavCount;
+			Agents += FString::Printf(TEXT("%s(r=%.0f,h=%.0f) "), *Recast->GetName(), Recast->AgentRadius, Recast->AgentHeight);
+		}
+	}
+
+	FString Paths;
+	int32 Failed = 0;
+	const AActor* CV = FindCommandVehicleForPhaseFlow();
+	for (int32 Id = 1; Id <= 4; ++Id)
+	{
+		AActor* Follower = PilotGetFollowerActor(Id);
+		if (!Follower || !CV)
+		{
+			continue;
+		}
+		UNavigationPath* Path = UNavigationSystemV1::FindPathToLocationSynchronously(World, Follower->GetActorLocation(), CV->GetActorLocation(), Follower);
+		const double Straight = FVector::Dist2D(Follower->GetActorLocation(), CV->GetActorLocation());
+		const bool bOk = Path && Path->IsValid() && !Path->IsPartial();
+		if (!bOk) { ++Failed; }
+		Paths += FString::Printf(TEXT("F%d:%s len=%.0f straight=%.0f pts=%d; "), Id, bOk ? TEXT("OK") : (Path && Path->IsPartial() ? TEXT("PARTIAL") : TEXT("NOPATH")),
+			Path ? Path->GetPathLength() : 0.0, Straight, Path ? Path->PathPoints.Num() : 0);
+	}
+
+	// Long route tests through the corridor clutter: command vehicle -> each rally marker.
+	// A length/straight ratio well above 1 means the path is detouring around obstacles.
+	{
+		AActor* Querier = PilotGetFollowerActor(1);
+		const TCHAR* RallyTags[3] = { TEXT("ESCROW_RallyMarker_A"), TEXT("ESCROW_RallyMarker_B"), TEXT("ESCROW_RallyMarker_C") };
+		const TCHAR* RallyNames[3] = { TEXT("A"), TEXT("B"), TEXT("C") };
+		for (int32 i = 0; i < 3 && CV && Querier; ++i)
+		{
+			const AActor* Marker = FindZoneActorByTag(FName(RallyTags[i]));
+			if (!Marker)
+			{
+				continue;
+			}
+			// The rally markers are floating labels; test against the ground point beneath them.
+			const FVector Goal(Marker->GetActorLocation().X, Marker->GetActorLocation().Y, CV->GetActorLocation().Z);
+			UNavigationPath* Path = UNavigationSystemV1::FindPathToLocationSynchronously(World, CV->GetActorLocation(), Goal, Querier);
+			const double Straight = FVector::Dist2D(CV->GetActorLocation(), Goal);
+			const bool bOk = Path && Path->IsValid() && !Path->IsPartial();
+			if (!bOk) { ++Failed; }
+			Paths += FString::Printf(TEXT("CV->%s:%s len=%.0f straight=%.0f ratio=%.2f pts=%d; "), RallyNames[i], bOk ? TEXT("OK") : (Path && Path->IsPartial() ? TEXT("PARTIAL") : TEXT("NOPATH")),
+				Path ? Path->GetPathLength() : 0.0, Straight, (Path && Straight > 1.0) ? Path->GetPathLength() / Straight : 0.0, Path ? Path->PathPoints.Num() : 0);
+		}
+	}
+
+	// Which nav data the engine treats as default, how many tiles it holds, and whether a
+	// point near a follower / the command vehicle projects onto it.
+	FString State;
+	{
+		const ANavigationData* Main = NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate);
+		int32 Tiles = -1;
+		if (const ARecastNavMesh* Recast = Cast<ARecastNavMesh>(Main))
+		{
+			Tiles = Recast->GetNavMeshTilesCount();
+		}
+		State = FString::Printf(TEXT("Default=%s Tiles=%d "), Main ? *Main->GetName() : TEXT("none"), Tiles);
+		AActor* F1 = PilotGetFollowerActor(1);
+		const FVector Extent(1500.0, 1500.0, 500.0);
+		FNavLocation Proj;
+		if (F1)
+		{
+			State += FString::Printf(TEXT("ProjectF1=%s "), NavSys->ProjectPointToNavigation(F1->GetActorLocation(), Proj, Extent) ? TEXT("ok") : TEXT("FAIL"));
+		}
+		if (CV)
+		{
+			State += FString::Printf(TEXT("ProjectCV=%s "), NavSys->ProjectPointToNavigation(CV->GetActorLocation(), Proj, Extent) ? TEXT("ok") : TEXT("FAIL"));
+		}
+	}
+
+	const FString Summary = FString::Printf(TEXT("NavMeshes=%d [%s] %sBuildInProgress=%s FailedPaths=%d | %s"), NavCount, *Agents, *State,
+		NavSys->IsNavigationBuildInProgress() ? TEXT("yes") : TEXT("no"), Failed, *Paths);
+	LogScenarioEvent(TEXT("NavDiagnostics"), 0, Summary);
+	if (EventLog)
+	{
+		FString Clean = Summary;
+		Clean.ReplaceInline(TEXT("\""), TEXT("'"));
+		EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("NavDiagnostics"), TEXT("Navigation self-check."), FString(), 0, CurrentPlanValidity,
+			FString::Printf(TEXT("{\"NavMeshCount\":%d,\"FailedPaths\":%d,\"Detail\":\"%s\"}"), NavCount, Failed, *Clean));
+	}
+
+	// If anything failed, look again later: separates "still building / not ready" from "broken".
+	if (Failed > 0 && PilotNavDiagRepeats < 3)
+	{
+		++PilotNavDiagRepeats;
+		World->GetTimerManager().SetTimer(PilotNavDiagTimerHandle, this, &UESCROWScenarioDirectorSubsystem::PilotRunNavDiagnostics, 20.0f, false);
+	}
 }
 
 void UESCROWScenarioDirectorSubsystem::MarkScenarioRuntimeFailed(const FString& Reason)
@@ -1702,6 +1826,14 @@ void UESCROWScenarioDirectorSubsystem::StartPilotPhaseFlow()
 	PilotAuthorizeReportID.Reset();
 	PilotCloseoutReportID.Reset();
 	for (int32 i = 0; i < PilotSlotCount; ++i) { PilotSlotBlocked[i] = false; PilotSlotLocations[i] = FVector::ZeroVector; }
+
+	// Followers start explicitly held: they do not follow the command vehicle until the
+	// participant gives each one an order. (The convoy manager's default order reads as
+	// "follow the command vehicle", which was misleading on the monitor.)
+	for (int32 FollowerId = 1; FollowerId <= PilotSlotCount; ++FollowerId)
+	{
+		PilotSetFollowerOrder(FollowerId, 5, -1, TEXT("InitialHold"));
+	}
 	World->GetTimerManager().SetTimer(PilotPhaseTimerHandle, this, &UESCROWScenarioDirectorSubsystem::PilotPhaseTick, PilotPhaseTickSeconds, true);
 }
 
