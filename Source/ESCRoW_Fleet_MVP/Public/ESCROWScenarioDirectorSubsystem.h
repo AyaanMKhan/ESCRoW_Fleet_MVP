@@ -357,6 +357,29 @@ private:
 	int32 PilotAffectedFollowerID = 2;
 	TSet<int32> PilotWrongFollowersLogged;
 
+	// Pilot fault: the affected follower stops (nav order "hold") until the operator
+	// takes over, drives it to the recovery point, and releases control there.
+	bool bPilotFaultHeld = false;
+	bool bPilotFaultResolved = false;
+	bool bPilotRecoveryReached = false;
+	FVector PilotRecoveryLocation = FVector::ZeroVector;
+	TWeakObjectPtr<AActor> PilotRecoveryActor;
+	TWeakObjectPtr<AActor> PilotConvoyManager;
+	double PilotLastFaultReassertSeconds = -1.0;
+	// The affected follower's nav order before the fault, restored when the fault is resolved.
+	int32 PilotPriorOrderType = 5;
+	int32 PilotPriorTargetVehicleID = -1;
+	int32 PilotReadConvoyIntArray(const TCHAR* ArrayName, int32 Index, int32 Default);
+	AActor* PilotFindConvoyManager();
+	AActor* PilotGetFollowerActor(int32 FollowerID);
+	bool PilotSetFollowerOrder(int32 FollowerID, int32 OrderType, int32 TargetVehicleID, const FString& Reason);
+	bool PilotSetFollowerHold(int32 FollowerID, bool bHold);
+	FVector PilotComputeRecoveryLocation(const FVector& From) const;
+	void PilotSpawnRecoveryPoint(const FVector& Location);
+	void PilotClearRecoveryPoint();
+	void PilotReassertFault(UESCROWFleetSubsystem* Fleet, UWorld* World);
+	void PilotTickFault(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
+
 	// RA42A helpers
 	FString ScenarioPhaseToText(EESCROWScenarioPhase Phase) const;
 	FString TaskingStateToText(EESCROWTaskingState State) const;

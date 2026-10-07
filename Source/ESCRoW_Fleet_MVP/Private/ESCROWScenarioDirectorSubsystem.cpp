@@ -13,6 +13,9 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Engine/Engine.h"
+#include "Components/SceneComponent.h"
+#include "Components/TextRenderComponent.h"
+#include "UObject/StructOnScope.h"
 
 namespace
 {
@@ -1659,6 +1662,11 @@ void UESCROWScenarioDirectorSubsystem::StartPilotPhaseFlow()
 	bPilotTakeoverSeenOnAffected = false;
 	PilotDisruptionOnsetWorldSeconds = -1.0;
 	PilotWrongFollowersLogged.Reset();
+	bPilotFaultHeld = false;
+	bPilotFaultResolved = false;
+	bPilotRecoveryReached = false;
+	PilotLastFaultReassertSeconds = -1.0;
+	PilotClearRecoveryPoint();
 	World->GetTimerManager().SetTimer(PilotPhaseTimerHandle, this, &UESCROWScenarioDirectorSubsystem::PilotPhaseTick, PilotPhaseTickSeconds, true);
 }
 
@@ -1717,15 +1725,38 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 			}
 			Fleet->RequestTakeover(PilotAffectedFollowerID);
 			Fleet->PostNotification(EESCROWNotificationKind::TakeoverRequest, EESCROWMessageSeverity::Warning, PilotAffectedFollowerID,
-				FString::Printf(TEXT("TAKEOVER REQUESTED: F%d"), PilotAffectedFollowerID),
-				FString::Printf(TEXT("F%d requires operator takeover."), PilotAffectedFollowerID),
+				FString::Printf(TEXT("TAKEOVER REQUESTED: %s"), *ESCROWFollowerCallsign(PilotAffectedFollowerID)),
+				FString::Printf(TEXT("%s has stopped and cannot continue. Take control and drive it to the recovery point."), *ESCROWFollowerCallsign(PilotAffectedFollowerID)),
 				FString::Printf(TEXT("F%d"), PilotAffectedFollowerID));
 			Fleet->AddMissionReport(FString::Printf(TEXT("RPT-0003-DISRUPTION-F%d"), PilotAffectedFollowerID), TEXT("Convoy Alert"), TEXT("ScenarioDirector"),
-				FString::Printf(TEXT("F%d has reported a fault and cannot continue autonomously. Operator intervention is required."), PilotAffectedFollowerID), true);
+				FString::Printf(TEXT("%s has reported a fault and has stopped. Take control of %s, drive it to the marked recovery point, then release control to return it to autonomy."), *ESCROWFollowerCallsign(PilotAffectedFollowerID), *ESCROWFollowerCallsign(PilotAffectedFollowerID)), true);
+
+			// Make the fault physical: hold the affected follower and mark a recovery point ahead of it.
+			PilotPriorOrderType = PilotReadConvoyIntArray(TEXT("PathModes"), PilotAffectedFollowerID, 5);
+			PilotPriorTargetVehicleID = PilotReadConvoyIntArray(TEXT("ReferenceVehicleIDs"), PilotAffectedFollowerID, -1);
+			PilotSetFollowerOrder(PilotAffectedFollowerID, 5, -1, TEXT("DisruptionFault"));
+			bPilotFaultHeld = true;
+			bPilotFaultResolved = false;
+			bPilotRecoveryReached = false;
+			PilotLastFaultReassertSeconds = World->GetTimeSeconds();
+			const AActor* FaultFollower = PilotGetFollowerActor(PilotAffectedFollowerID);
+			const FVector FaultFrom = FaultFollower ? FaultFollower->GetActorLocation() : CVLocation;
+			PilotRecoveryLocation = PilotComputeRecoveryLocation(FaultFrom);
+			PilotSpawnRecoveryPoint(PilotRecoveryLocation);
+			if (EventLog)
+			{
+				EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("FaultHoldApplied"),
+					FString::Printf(TEXT("F%d held (fault)."), PilotAffectedFollowerID), ActiveTasking.TaskingID, PilotAffectedFollowerID, CurrentPlanValidity,
+					FString::Printf(TEXT("{\"FollowerLocation\":\"%s\"}"), *FaultFrom.ToCompactString()));
+				EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("RecoveryPointSpawned"),
+					TEXT("Recovery point marked ahead of the affected follower."), ActiveTasking.TaskingID, PilotAffectedFollowerID, CurrentPlanValidity,
+					FString::Printf(TEXT("{\"X\":%.0f,\"Y\":%.0f,\"DistanceFromFollowerCm\":%.0f}"), PilotRecoveryLocation.X, PilotRecoveryLocation.Y, FVector::Dist2D(FaultFrom, PilotRecoveryLocation)));
+			}
 		}
 		break;
 
 	case EESCROWScenarioPhase::PhaseC_DisruptionDetection:
+		PilotReassertFault(Fleet, World);
 		if (Fleet->bTakeoverActive)
 		{
 			const int32 TakenOver = Fleet->ActiveTakeoverFollowerID;
@@ -1756,17 +1787,274 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 		break;
 
 	case EESCROWScenarioPhase::PhaseD_TakeoverIntervention:
-		if (bPilotTakeoverSeenOnAffected && !Fleet->bTakeoverActive)
-		{
-			CompleteActiveTasking(TEXT("TakeoverReleased"));
-			SetScenarioPhase(EESCROWScenarioPhase::PhaseE_PlanRepair, TEXT("TakeoverReleased"));
-			// Plan repair (E) and closeout (F) are not implemented yet; stop evaluating zones.
-			World->GetTimerManager().ClearTimer(PilotPhaseTimerHandle);
-			bPilotPhaseFlowActive = false;
-		}
+		PilotTickFault(Fleet, EventLog, World);
 		break;
 
 	default:
 		break;
 	}
+}
+
+// =============================== Pilot fault (hold + recovery point) ===============================
+
+AActor* UESCROWScenarioDirectorSubsystem::PilotFindConvoyManager()
+{
+	if (PilotConvoyManager.IsValid())
+	{
+		return PilotConvoyManager.Get();
+	}
+	if (const UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AActor> It(World); It; ++It)
+		{
+			if (IsValid(*It) && It->GetClass()->GetName().Contains(TEXT("ConvoyTelemetryManager")))
+			{
+				PilotConvoyManager = *It;
+				return *It;
+			}
+		}
+	}
+	return nullptr;
+}
+
+AActor* UESCROWScenarioDirectorSubsystem::PilotGetFollowerActor(int32 FollowerID)
+{
+	AActor* CTM = PilotFindConvoyManager();
+	if (!CTM)
+	{
+		return nullptr;
+	}
+	const FObjectProperty* Prop = CastField<FObjectProperty>(CTM->GetClass()->FindPropertyByName(*FString::Printf(TEXT("F%dRef"), FollowerID)));
+	return Prop ? Cast<AActor>(Prop->GetObjectPropertyValue_InContainer(CTM)) : nullptr;
+}
+
+bool UESCROWScenarioDirectorSubsystem::PilotSetFollowerOrder(int32 FollowerID, int32 OrderType, int32 TargetVehicleID, const FString& Reason)
+{
+	AActor* CTM = PilotFindConvoyManager();
+	UFunction* Fn = CTM ? CTM->FindFunction(TEXT("Escrow_ApplyNavOrder")) : nullptr;
+	if (!Fn)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ESCROWScenarioDirector: Escrow_ApplyNavOrder not found on ConvoyTelemetryManager."));
+		return false;
+	}
+	FStructOnScope Params(Fn);
+	uint8* Mem = Params.GetStructMemory();
+	auto SetInt = [&](const TCHAR* Name, int32 Value)
+	{
+		if (const FIntProperty* P = CastField<FIntProperty>(Fn->FindPropertyByName(Name))) { P->SetPropertyValue_InContainer(Mem, Value); }
+	};
+	SetInt(TEXT("FollowerID"), FollowerID);
+	SetInt(TEXT("OrderType"), OrderType);
+	SetInt(TEXT("TargetVehicleID"), TargetVehicleID);
+	SetInt(TEXT("BreadcrumbIndex"), -1);
+	if (const FStrProperty* P = CastField<FStrProperty>(Fn->FindPropertyByName(TEXT("Reason")))) { P->SetPropertyValue_InContainer(Mem, Reason); }
+	CTM->ProcessEvent(Fn, Mem);
+	return true;
+}
+
+bool UESCROWScenarioDirectorSubsystem::PilotSetFollowerHold(int32 FollowerID, bool bHold)
+{
+	AActor* CTM = PilotFindConvoyManager();
+	UFunction* Fn = CTM ? CTM->FindFunction(TEXT("Escrow_SetFollowerHold")) : nullptr;
+	if (!Fn)
+	{
+		return false;
+	}
+	FStructOnScope Params(Fn);
+	uint8* Mem = Params.GetStructMemory();
+	if (const FIntProperty* P = CastField<FIntProperty>(Fn->FindPropertyByName(TEXT("FollowerID")))) { P->SetPropertyValue_InContainer(Mem, FollowerID); }
+	if (const FBoolProperty* P = CastField<FBoolProperty>(Fn->FindPropertyByName(TEXT("bHold")))) { P->SetPropertyValue_InContainer(Mem, bHold); }
+	CTM->ProcessEvent(Fn, Mem);
+	return true;
+}
+
+FVector UESCROWScenarioDirectorSubsystem::PilotComputeRecoveryLocation(const FVector& From) const
+{
+	// Walk 300 m along the route (start -> Rally B -> Rally C) from the follower's position.
+	constexpr double WalkDistanceCm = 30000.0;
+	const AActor* BZone = FindZoneActorByTag(ZoneTag_RallyB);
+	const AActor* CMarker = FindZoneActorByTag(FName(TEXT("ESCROW_RallyMarker_C")));
+	FVector Pos(From.X, From.Y, 120.0);
+	double Remain = WalkDistanceCm;
+	if (BZone)
+	{
+		const FVector Bp(BZone->GetActorLocation().X, BZone->GetActorLocation().Y, 120.0);
+		const FVector ToB = Bp - Pos;
+		if (ToB.Y > 0.0)
+		{
+			const double DistToB = ToB.Size2D();
+			if (DistToB >= Remain)
+			{
+				return Pos + ToB.GetSafeNormal2D() * Remain;
+			}
+			Pos = Bp;
+			Remain -= DistToB;
+		}
+	}
+	if (CMarker)
+	{
+		const FVector Cp(CMarker->GetActorLocation().X, CMarker->GetActorLocation().Y, 120.0);
+		const FVector ToC = Cp - Pos;
+		const double Usable = FMath::Max(0.0, ToC.Size2D() - 15000.0);
+		return Pos + ToC.GetSafeNormal2D() * FMath::Min(Remain, Usable);
+	}
+	return Pos + FVector(0.0, Remain, 0.0);
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotSpawnRecoveryPoint(const FVector& Location)
+{
+	PilotClearRecoveryPoint();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	FActorSpawnParameters Params;
+	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* Marker = World->SpawnActor<AActor>(AActor::StaticClass(), FTransform(FRotator::ZeroRotator, Location), Params);
+	if (!Marker)
+	{
+		return;
+	}
+	USceneComponent* Root = NewObject<USceneComponent>(Marker, TEXT("RecoveryRoot"));
+	Marker->SetRootComponent(Root);
+	Root->SetWorldLocation(Location);
+	Root->RegisterComponent();
+
+	UTextRenderComponent* Label = NewObject<UTextRenderComponent>(Marker, TEXT("RecoveryLabel"));
+	Label->SetupAttachment(Root);
+	Label->SetText(FText::FromString(TEXT("RECOVERY POINT")));
+	Label->SetTextRenderColor(FColor(255, 190, 0));
+	Label->SetWorldSize(3000.0f);
+	Label->SetHorizontalAlignment(EHTA_Center);
+	Label->SetVerticalAlignment(EVRTA_TextCenter);
+	Label->SetRelativeLocation(FVector(0.0, 0.0, 3000.0));
+	Label->SetRelativeRotation(FRotator(0.0, -90.0, 0.0));
+	Label->bNeverDistanceCull = true;
+	Label->RegisterComponent();
+
+	// Same tag family the GPS rally markers use, so the GPS shows it.
+	Marker->Tags.Add(FName(TEXT("ESCROW_RallyMarker_R")));
+	PilotRecoveryActor = Marker;
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotClearRecoveryPoint()
+{
+	if (AActor* Marker = PilotRecoveryActor.Get())
+	{
+		Marker->Destroy();
+	}
+	PilotRecoveryActor.Reset();
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotReassertFault(UESCROWFleetSubsystem* Fleet, UWorld* World)
+{
+	if (!bPilotFaultHeld || !Fleet || Fleet->bTakeoverActive)
+	{
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	if (Now - PilotLastFaultReassertSeconds < 1.0)
+	{
+		return;
+	}
+	PilotLastFaultReassertSeconds = Now;
+	FESCROWFollowerStatus Status;
+	if (Fleet->GetFollowerStatus(PilotAffectedFollowerID, Status) && Status.CurrentState != EESCROWFollowerState::HoldingPosition)
+	{
+		// The operator (or the convoy logic) tried to move the faulted follower; hold it again.
+		PilotSetFollowerOrder(PilotAffectedFollowerID, 5, -1, TEXT("FaultReasserted"));
+		LogScenarioEvent(TEXT("FaultReasserted"), PilotAffectedFollowerID, TEXT("Faulted follower order overridden; hold re-applied."));
+	}
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotTickFault(UESCROWFleetSubsystem* Fleet, UESCROWEventLogSubsystem* EventLog, UWorld* World)
+{
+	const int32 ID = PilotAffectedFollowerID;
+	const double Now = World->GetTimeSeconds();
+	AActor* Follower = PilotGetFollowerActor(ID);
+	const bool bUnderTakeover = Fleet->bTakeoverActive && Fleet->ActiveTakeoverFollowerID == ID;
+
+	auto LogEv = [&](const TCHAR* Type, const FString& Text, const FString& Payload)
+	{
+		LogScenarioEvent(Type, ID, Text);
+		if (EventLog)
+		{
+			EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), Type, Text, ActiveTasking.TaskingID, ID, CurrentPlanValidity, Payload);
+		}
+	};
+
+	if (bUnderTakeover)
+	{
+		if (bPilotFaultHeld)
+		{
+			// Lift the hold so the operator can actually drive the follower.
+			PilotSetFollowerHold(ID, false);
+			bPilotFaultHeld = false;
+			LogEv(TEXT("FaultHoldReleasedForTakeover"), FString::Printf(TEXT("F%d hold lifted for operator control."), ID), FString());
+		}
+		if (!bPilotRecoveryReached && Follower && FVector::Dist2D(Follower->GetActorLocation(), PilotRecoveryLocation) <= 2500.0)
+		{
+			bPilotRecoveryReached = true;
+			LogEv(TEXT("RecoveryPointReached"), FString::Printf(TEXT("F%d reached the recovery point."), ID),
+				FString::Printf(TEXT("{\"SecondsSinceOnset\":%.2f}"), Now - PilotDisruptionOnsetWorldSeconds));
+			Fleet->PostNotification(EESCROWNotificationKind::Info, EESCROWMessageSeverity::Info, ID, TEXT("RECOVERY POINT REACHED"),
+				FString::Printf(TEXT("%s is at the recovery point. Release control to return it to autonomy."), *ESCROWFollowerCallsign(ID)), FString::Printf(TEXT("F%d"), ID));
+		}
+		return;
+	}
+
+	if (bPilotFaultResolved)
+	{
+		return;
+	}
+
+	if (bPilotRecoveryReached)
+	{
+		bPilotFaultResolved = true;
+		Fleet->SetRequiresTakeover(ID, false);
+		// Put the follower back to what it was doing before the fault. Orders that need a target
+		// location (move-to-waypoint types) cannot be rebuilt here, so those fall back to hold.
+		const bool bRestorable = (PilotPriorOrderType == 1 || PilotPriorOrderType == 5);
+		const int32 RestoreOrder = bRestorable ? PilotPriorOrderType : 5;
+		PilotSetFollowerOrder(ID, RestoreOrder, RestoreOrder == 1 ? PilotPriorTargetVehicleID : -1, TEXT("FaultResolved"));
+		PilotClearRecoveryPoint();
+		LogEv(TEXT("FaultResolved"), FString::Printf(TEXT("F%d fault resolved; returned to convoy."), ID),
+			FString::Printf(TEXT("{\"SecondsSinceOnset\":%.2f}"), Now - PilotDisruptionOnsetWorldSeconds));
+		CompleteActiveTasking(TEXT("FaultResolved"));
+		SetScenarioPhase(EESCROWScenarioPhase::PhaseE_PlanRepair, TEXT("FaultResolved"));
+		return;
+	}
+
+	if (!bPilotFaultHeld)
+	{
+		// Control was released before the recovery point: stop it again.
+		PilotSetFollowerOrder(ID, 5, -1, TEXT("ReleasedBeforeRecovery"));
+		bPilotFaultHeld = true;
+		PilotLastFaultReassertSeconds = Now;
+		LogEv(TEXT("ReleasedBeforeRecovery"), FString::Printf(TEXT("F%d released before the recovery point; held again."), ID), FString());
+		// The release path says "returned to autonomy" and clears the takeover flag; the fault is
+		// still present, so raise the request again (new HUD directive + flag back on).
+		Fleet->RequestTakeover(ID);
+		Fleet->PostNotification(EESCROWNotificationKind::Warning, EESCROWMessageSeverity::Warning, ID,
+			FString::Printf(TEXT("%s STILL FAULTED"), *ESCROWFollowerCallsign(ID)),
+			FString::Printf(TEXT("Control was released before the recovery point. Retake control and drive %s there."), *ESCROWFollowerCallsign(ID)), FString::Printf(TEXT("F%d"), ID));
+	}
+}
+
+int32 UESCROWScenarioDirectorSubsystem::PilotReadConvoyIntArray(const TCHAR* ArrayName, int32 Index, int32 Default)
+{
+	AActor* CTM = PilotFindConvoyManager();
+	if (!CTM)
+	{
+		return Default;
+	}
+	const FArrayProperty* ArrayProp = CastField<FArrayProperty>(CTM->GetClass()->FindPropertyByName(ArrayName));
+	const FIntProperty* Inner = ArrayProp ? CastField<FIntProperty>(ArrayProp->Inner) : nullptr;
+	if (!ArrayProp || !Inner)
+	{
+		return Default;
+	}
+	FScriptArrayHelper Helper(ArrayProp, ArrayProp->ContainerPtrToValuePtr<void>(CTM));
+	return Helper.IsValidIndex(Index) ? Inner->GetPropertyValue(Helper.GetRawPtr(Index)) : Default;
 }

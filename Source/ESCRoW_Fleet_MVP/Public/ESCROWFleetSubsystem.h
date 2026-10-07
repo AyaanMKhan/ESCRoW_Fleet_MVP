@@ -60,8 +60,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Fleet")
 	void GenerateInitialMissionReports(const FString& ScenarioName, float MissionTime);
 
+	// Participant-facing callsign for a follower (0 = command vehicle).
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
+	FString GetFollowerCallsign(int32 FollowerID) const;
+
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
 	int32 GetMissionReportCount() const;
+
+	// True when the report at Index is the fleet-telemetry type (the only report that
+	// shows the telemetry snapshot table). False for any other type or a bad index.
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
+	bool IsMissionReportTelemetry(int32 Index) const;
 
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|Fleet")
 	bool GetMissionReportByIndex(int32 Index, FESCROWMissionReport& OutReport) const;

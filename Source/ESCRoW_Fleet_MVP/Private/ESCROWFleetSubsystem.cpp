@@ -28,7 +28,7 @@ void UESCROWFleetSubsystem::ResetFleetState()
 	{
 		FESCROWFollowerStatus Status;
 		Status.FollowerID = FollowerID;
-		Status.Callsign = FString::Printf(TEXT("F%d"), FollowerID);
+		Status.Callsign = ESCROWFollowerCallsign(FollowerID);
 		Status.CurrentState = EESCROWFollowerState::FollowingConvoy;
 		Status.AutonomyMode = EESCROWAutonomyMode::Autonomous;
 		Status.HealthStatus = TEXT("Nominal");
@@ -55,8 +55,13 @@ void UESCROWFleetSubsystem::ResetFleetState()
 	HUDMessages.Reset();
 }
 
-void UESCROWFleetSubsystem::RegisterFollower(int32 FollowerID, const FString& Callsign, AActor* ActorRef)
+void UESCROWFleetSubsystem::RegisterFollower(int32 FollowerID, const FString& InCallsign, AActor* ActorRef)
 {
+	// The follower vehicle Blueprints register themselves with their own placeholder name
+	// ("F4"); the shared callsign table is the single source of truth for F1-F4.
+	const bool bKnownFollower = FollowerID >= 1 && FollowerID <= 4;
+	const FString Callsign = bKnownFollower ? ESCROWFollowerCallsign(FollowerID) : InCallsign;
+
 	FESCROWFollowerStatus* Existing = FindFollower(FollowerID);
 	if (Existing)
 	{
@@ -599,7 +604,11 @@ void UESCROWFleetSubsystem::GenerateInitialMissionReports(const FString& Scenari
 	Brief.ReportType = EESCROWReportType::Text;
 	Brief.Title = TEXT("Mission Brief");
 	Brief.Source = TEXT("ScenarioDirector");
-	Brief.BodyText = FString::Printf(TEXT("Scenario: %s. Convoy operations underway. Monitor follower spacing, autonomy state, and route progress. Report any deviation requiring operator intervention."), *ScenarioName);
+	// Written for the flat pilot scenario; ScenarioName is kept in the signature for callers.
+	Brief.BodyText = TEXT("You are supervising a command vehicle and four autonomous followers (F1-F4) travelling north from the start: Rally A, then Rally B, then Rally C to the north-east. "
+		"Monitor follower status, spacing and route progress on the HUD and GPS. If a follower reports a fault, take control of it, resolve the problem, and return it to autonomy. "
+		"At Rally C, check the planned follower positions, repair any that are not feasible, and validate the plan before it is executed. "
+		"Finish by confirming readiness, clearing outstanding warnings, and submitting the closeout report.");
 	Brief.ReceivedMissionTime = MissionTime;
 	Brief.bRequiresAck = false;
 	Brief.bAcknowledged = false;
@@ -623,9 +632,19 @@ void UESCROWFleetSubsystem::GenerateInitialMissionReports(const FString& Scenari
 	}
 }
 
+FString UESCROWFleetSubsystem::GetFollowerCallsign(int32 FollowerID) const
+{
+	return ESCROWFollowerCallsign(FollowerID);
+}
+
 int32 UESCROWFleetSubsystem::GetMissionReportCount() const
 {
 	return MissionReports.Num();
+}
+
+bool UESCROWFleetSubsystem::IsMissionReportTelemetry(int32 Index) const
+{
+	return MissionReports.IsValidIndex(Index) && MissionReports[Index].ReportType == EESCROWReportType::FleetTelemetry;
 }
 
 bool UESCROWFleetSubsystem::GetMissionReportByIndex(int32 Index, FESCROWMissionReport& OutReport) const

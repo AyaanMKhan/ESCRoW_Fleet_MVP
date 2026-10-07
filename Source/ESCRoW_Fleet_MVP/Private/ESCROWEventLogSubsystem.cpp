@@ -446,6 +446,8 @@ FString UESCROWEventLogSubsystem::BuildRunConfigJSON(const FESCROWRunConfig& Con
 	Lines.Add(FString::Printf(TEXT("  \"GitCommitOrBuildLabel\": \"%s\","), *EscapeJSONField(Config.GitCommitOrBuildLabel)));
 	Lines.Add(FString::Printf(TEXT("  \"CreatedAt\": \"%s\","), *LocalToUtcIso(Config.CreatedAt)));
 	Lines.Add(FString::Printf(TEXT("  \"LocalUtcOffsetMinutes\": %d,"), LocalUtcOffsetMinutes()));
+	Lines.Add(FString::Printf(TEXT("  \"FollowerCallsigns\": {\"F1\":\"%s\",\"F2\":\"%s\",\"F3\":\"%s\",\"F4\":\"%s\"},"),
+		*ESCROWFollowerCallsign(1), *ESCROWFollowerCallsign(2), *ESCROWFollowerCallsign(3), *ESCROWFollowerCallsign(4)));
 	Lines.Add(FString::Printf(TEXT("  \"Notes\": \"%s\","), *EscapeJSONField(Config.Notes)));
 	Lines.Add(FString::Printf(TEXT("  \"RunValidity\": \"%s\""), *EscapeJSONField(Config.RunValidity.IsEmpty() ? TEXT("Valid") : *Config.RunValidity)));
 	Lines.Add(TEXT("}"));

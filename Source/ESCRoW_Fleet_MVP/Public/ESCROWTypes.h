@@ -1149,3 +1149,20 @@ struct FESCROWReportRecord
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|DataManager")
 	FString RelatedEventID;
 };
+
+// Participant-facing callsigns for followers F1-F4. The IDs (1-4, "F1".."F4") remain the
+// identifiers used for logging, HUD page names and internal lookups; only displayed text
+// uses these. Command vehicle is 0. Deliberately not NATO letters, which the rally
+// points (Alpha/Bravo/Charlie) already use.
+inline FString ESCROWFollowerCallsign(int32 FollowerID)
+{
+	switch (FollowerID)
+	{
+	case 0: return TEXT("COMMAND");
+	case 1: return TEXT("HAWK");
+	case 2: return TEXT("WOLF");
+	case 3: return TEXT("LYNX");
+	case 4: return TEXT("BEAR");
+	default: return FString::Printf(TEXT("F%d"), FollowerID);
+	}
+}
