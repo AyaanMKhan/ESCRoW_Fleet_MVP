@@ -605,8 +605,8 @@ void UESCROWFleetSubsystem::GenerateInitialMissionReports(const FString& Scenari
 	Brief.Title = TEXT("Mission Brief");
 	Brief.Source = TEXT("ScenarioDirector");
 	// Written for the flat pilot scenario; ScenarioName is kept in the signature for callers.
-	Brief.BodyText = TEXT("You are supervising a command vehicle and four autonomous followers - HAWK, WOLF, LYNX and BEAR - travelling north from the start: Rally A, then Rally B, then Rally C to the north-east. Arrange the followers into a convoy as you see fit before you set off. "
-		"Monitor follower status, spacing and route progress on the HUD and GPS. If a follower reports a fault, take control of it, resolve the problem, and return it to autonomy. "
+	Brief.BodyText = TEXT("You are supervising a command vehicle and four autonomous followers - HAWK, WOLF, LYNX and BEAR - travelling north from the start: Rally A, then Rally B, then Rally C to the north-east. Your orders will arrive as numbered reports from Mission Control; carry them out in order. "
+		"Monitor follower status, spacing and route progress on the HUD and GPS. If a follower is not performing as it should, take control of it, resolve the problem, and return it to autonomy. "
 		"At Rally C, check the planned follower positions, repair any that are not feasible, and validate the plan before it is executed. "
 		"Finish by confirming readiness, clearing outstanding warnings, and submitting the closeout report.");
 	Brief.ReceivedMissionTime = MissionTime;

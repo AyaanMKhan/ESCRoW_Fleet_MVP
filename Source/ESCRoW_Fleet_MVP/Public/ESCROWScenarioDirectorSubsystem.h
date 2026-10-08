@@ -352,37 +352,83 @@ private:
 	TWeakObjectPtr<AActor> PilotCommandVehicle;
 	bool bPilotPhaseFlowActive = false;
 	bool bPilotRallyAArrivalLogged = false;
-	bool bPilotTakeoverSeenOnAffected = false;
-	double PilotDisruptionOnsetWorldSeconds = -1.0;
-	int32 PilotAffectedFollowerID = 2;
-	TSet<int32> PilotWrongFollowersLogged;
+	double PilotDisruptionOnsetWorldSeconds = -1.0; // time Rally B was reached / formation was held (not a fault onset)
 
-	// Pilot fault: the affected follower stops (nav order "hold") until the operator
-	// takes over, drives it to the recovery point, and releases control there.
-	bool bPilotFaultHeld = false;
-	bool bPilotFaultResolved = false;
-	bool bPilotRecoveryReached = false;
-	FVector PilotRecoveryLocation = FVector::ZeroVector;
-	TWeakObjectPtr<AActor> PilotRecoveryActor;
+	// Orders. The participant is told what to do by a numbered report at each step (Mission Control):
+	//   1 gather everyone at Rally A, 2 confirm the gather, 3 arrange the convoy for the move to Rally B,
+	//   4 arrange the Rally B formation, 5 proceed to Rally C.
+	// Progress is driven by the real state of the fleet, never by the confirmation alone: the sim checks
+	// whether all five vehicles are inside Rally A and whether the follow chain is as ordered, and logs
+	// whether the participant's confirmation was correct.
+	double PilotScenarioStartSeconds = -1.0;
+	double PilotRallyAArrivalSeconds = -1.0;
+	double PilotGatherHeldSince = -1.0;
+	double PilotGatherCompleteSeconds = -1.0;
+	double PilotOrderGatherPostedSeconds = -1.0;
+	double PilotOrderConvoyDueSeconds = -1.0;
+	double PilotOrderConvoyPostedSeconds = -1.0;
+	double PilotConvoyHeldSince = -1.0;
+	bool bPilotOrderGatherPosted = false;
+	bool bPilotOrderConfirmPosted = false;
+	bool bPilotOrderConvoyPosted = false;
+	bool bPilotGatherComplete = false;
+	bool bPilotGatherConfirmHandled = false;
+	bool bPilotGatherReminderPosted = false;
+	bool bPilotConvoyArranged = false;
+	static constexpr int32 PilotConvoyOrder[4] = { 1, 2, 3, 4 }; // HAWK, WOLF, LYNX, BEAR (BEAR at the rear)
+	void PilotTickOpeningOrders(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
+	bool PilotEvaluateGather(FString& OutDetail, TArray<int32>& OutOutside);
+	bool PilotEvaluateConvoy(FString& OutDetail);
+	void PilotPostOrder(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, int32 OrderIndex, const FString& ReportID, const FString& Title, const FString& Body, bool bRequiresAck, bool bNotify);
+
+	// Pilot faults: a follower stops (nav order "hold") until the operator takes over, drives it to
+	// the recovery point, and releases control there. Two faults run in the pilot: WOLF (F2) fails
+	// early on the route once it has passed Rally A; BEAR (F4) fails later, after the formation at
+	// Rally B is held and it has started toward Rally C. Both are independent of each other.
+	struct FPilotFault
+	{
+		int32 FollowerID = 0;
+		FString Key;                 // "EarlyRoute" / "LateConvoy"
+		bool bDrivesPhases = false;  // true: takeover -> Phase D, resolution -> Phase E
+		bool bTriggered = false;
+		bool bHeld = false;
+		bool bResolved = false;
+		bool bRecoveryReached = false;
+		bool bMarkerSpawned = false;
+		bool bSelectionLogged = false;
+		bool bTakeoverSeen = false;
+		double OnsetSeconds = -1.0;
+		double LastReassertSeconds = -1.0;
+		int32 PriorOrderType = 5;           // restored when the fault is resolved
+		int32 PriorTargetVehicleID = -1;
+		int32 LastSeenSelected = -1;
+		FVector RecoveryLocation = FVector::ZeroVector;
+		TWeakObjectPtr<AActor> RecoveryActor;
+		TSet<int32> WrongTakeoversLogged;
+	};
+	TArray<FPilotFault> PilotFaults;
 	TWeakObjectPtr<AActor> PilotConvoyManager;
-	double PilotLastFaultReassertSeconds = -1.0;
-	// The affected follower's nav order before the fault, restored when the fault is resolved.
-	int32 PilotPriorOrderType = 5;
-	int32 PilotPriorTargetVehicleID = -1;
 	int32 PilotReadConvoyIntArray(const TCHAR* ArrayName, int32 Index, int32 Default);
 	AActor* PilotFindConvoyManager();
 	AActor* PilotGetFollowerActor(int32 FollowerID);
 	bool PilotSetFollowerOrder(int32 FollowerID, int32 OrderType, int32 TargetVehicleID, const FString& Reason);
 	bool PilotSetFollowerHold(int32 FollowerID, bool bHold);
+	// Runs the follower's own Escrow_RestoreAfterTakeover (zero inputs, forward gear, clear reversing).
+	// Needed after a fault hold is re-applied right after a takeover release, which otherwise leaves the
+	// follower crawling in a stale reverse state.
+	void PilotResetFollowerDriveState(int32 FollowerID, const TCHAR* Why);
 	FVector PilotComputeRecoveryLocation(const FVector& From) const;
-	void PilotSpawnRecoveryPoint(const FVector& Location);
-	void PilotClearRecoveryPoint();
-	// Spawns the recovery marker once and logs when/why (Trigger: "DisruptionOnset" or "ParticipantTakeover").
-	void PilotSpawnRecoveryMarkerLogged(class UESCROWEventLogSubsystem* EventLog, const TCHAR* Trigger);
+	void PilotSpawnRecoveryPoint(FPilotFault& Fault);
+	void PilotClearRecoveryPoint(FPilotFault& Fault);
+	// Spawns the fault's recovery marker once and logs when/why (Trigger: "DisruptionOnset" or "ParticipantTakeover").
+	void PilotSpawnRecoveryMarkerLogged(FPilotFault& Fault, class UESCROWEventLogSubsystem* EventLog, const TCHAR* Trigger);
 	class UESCROWSessionSubsystem* PilotGetSession() const;
-	bool bPilotRecoveryMarkerSpawned = false;
-	void PilotReassertFault(UESCROWFleetSubsystem* Fleet, UWorld* World);
-	void PilotTickFault(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
+	void PilotTickFaults(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World, const FVector& CVLocation);
+	void PilotTriggerFault(FPilotFault& Fault, UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World, const FVector& CVLocation, const FString& Reason);
+	void PilotTrackDetection(FPilotFault& Fault, UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
+	void PilotHandleFaultTakeover(FPilotFault& Fault, UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
+	void PilotReassertFault(FPilotFault& Fault, UESCROWFleetSubsystem* Fleet, UWorld* World);
+	void PilotTickFault(FPilotFault& Fault, UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
 
 	// Pilot Phase E (Rally C plan repair) and Phase F (closeout). On reaching Rally C the
 	// planned formation slots appear, two of them blocked; the operator reassigns the
@@ -431,11 +477,6 @@ private:
 	int32 PilotFormFollowers[PilotSlotCount] = { 1, 4, 3, 2 };
 	bool bPilotValidatePrompted = false;
 
-	// Detection tracking for the Phase C disruption: when the operator first selects the
-	// affected follower (detection latency) and which wrong followers they selected first.
-	int32 PilotLastSeenSelectedFollower = -1;
-	bool bPilotAffectedSelectionLogged = false;
-	void PilotTrackDetection(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
 	void PilotTickFormation(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
 	void PilotPostFormation(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
 	bool PilotEvaluateFormation(FString& OutDetail);

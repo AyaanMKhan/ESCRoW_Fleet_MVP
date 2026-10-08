@@ -212,6 +212,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
 	bool ShouldSpawnRecoveryMarkerAtDisruptionOnset() const;
 
+	// True in ManualReduced / NoisyFragmented: pilot faults are applied with NO participant-visible cue
+	// (no toast, no report, no marker); the participant must notice them from the fleet itself.
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
 	bool ShouldUseGenericAnomalyText() const;
 
