@@ -414,6 +414,34 @@ private:
 	void PilotClearPlanMarkers();
 	double PilotFindGroundZ(const FVector& Location, double Fallback) const;
 
+	// Pilot Phase B formation: on reaching Rally B the operator must arrange the fleet into a
+	// line abreast. The slot order is deliberately different from the callsign order
+	// (HAWK, BEAR, LYNX, WOLF) so rearranging takes thought. The disruption only starts once
+	// the formation has been held (or after a long fallback timeout).
+	bool bPilotFormationPosted = false;
+	bool bPilotFormationSatisfied = false;
+	double PilotFormationPostedSeconds = -1.0;
+	double PilotFormationHeldSince = -1.0;
+	double PilotFormationLastReminderSeconds = -1.0;
+	FVector PilotFormLocations[PilotSlotCount];
+	int32 PilotFormFollowers[PilotSlotCount] = { 1, 4, 3, 2 };
+	bool bPilotValidatePrompted = false;
+
+	// Detection tracking for the Phase C disruption: when the operator first selects the
+	// affected follower (detection latency) and which wrong followers they selected first.
+	int32 PilotLastSeenSelectedFollower = -1;
+	bool bPilotAffectedSelectionLogged = false;
+	void PilotTrackDetection(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
+	void PilotTickFormation(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
+	void PilotPostFormation(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
+	bool PilotEvaluateFormation(FString& OutDetail);
+
+	// Periodic / phase-change fleet status reports (new report each time, with a snapshot).
+	double PilotLastFleetReportSeconds = -1.0;
+	int32 PilotFleetReportCount = 0;
+	EESCROWScenarioPhase PilotLastReportedPhase = EESCROWScenarioPhase::None;
+	void PilotMaybePostFleetReport(UESCROWFleetSubsystem* Fleet, UWorld* World);
+
 	// Startup nav self-check: logs the live nav agent size and whether each follower can
 	// path to the command vehicle (waits for the dynamic nav mesh to finish building).
 	void PilotRunNavDiagnostics();

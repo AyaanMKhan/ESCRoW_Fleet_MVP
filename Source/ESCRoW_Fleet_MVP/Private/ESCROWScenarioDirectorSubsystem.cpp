@@ -1825,7 +1825,18 @@ void UESCROWScenarioDirectorSubsystem::StartPilotPhaseFlow()
 	PilotValidateReportID.Reset();
 	PilotAuthorizeReportID.Reset();
 	PilotCloseoutReportID.Reset();
-	for (int32 i = 0; i < PilotSlotCount; ++i) { PilotSlotBlocked[i] = false; PilotSlotLocations[i] = FVector::ZeroVector; }
+	for (int32 i = 0; i < PilotSlotCount; ++i) { PilotSlotBlocked[i] = false; PilotSlotLocations[i] = FVector::ZeroVector; PilotFormLocations[i] = FVector::ZeroVector; }
+	bPilotFormationPosted = false;
+	bPilotFormationSatisfied = false;
+	PilotFormationPostedSeconds = -1.0;
+	PilotFormationHeldSince = -1.0;
+	PilotFormationLastReminderSeconds = -1.0;
+	bPilotValidatePrompted = false;
+	PilotLastSeenSelectedFollower = -1;
+	bPilotAffectedSelectionLogged = false;
+	PilotLastFleetReportSeconds = -1.0;
+	PilotFleetReportCount = 0;
+	PilotLastReportedPhase = EESCROWScenarioPhase::None;
 
 	// Followers start explicitly held: they do not follow the command vehicle until the
 	// participant gives each one an order. (The convoy manager's default order reads as
@@ -1855,6 +1866,8 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 	const FVector CVLocation = CV->GetActorLocation();
 	UESCROWEventLogSubsystem* EventLog = GetEventLog();
 
+	PilotMaybePostFleetReport(Fleet, World);
+
 	switch (CurrentPhase)
 	{
 	case EESCROWScenarioPhase::PhaseA_RoutineMonitoring:
@@ -1876,9 +1889,15 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 		break;
 
 	case EESCROWScenarioPhase::PhaseB_RallyBreakout:
-		if (PilotDisruptionOnsetWorldSeconds >= 0.0 && (World->GetTimeSeconds() - PilotDisruptionOnsetWorldSeconds) >= PilotDisruptionDelayAfterRallyBSeconds)
+		PilotTickFormation(Fleet, EventLog, World);
+		// The disruption starts a fixed delay after the formation is held (PilotTickFormation
+		// restarts PilotDisruptionOnsetWorldSeconds at that moment).
+		if (bPilotFormationSatisfied && PilotDisruptionOnsetWorldSeconds >= 0.0 && (World->GetTimeSeconds() - PilotDisruptionOnsetWorldSeconds) >= PilotDisruptionDelayAfterRallyBSeconds)
 		{
+			PilotClearPlanMarkers();
 			PilotDisruptionOnsetWorldSeconds = World->GetTimeSeconds();
+			PilotLastSeenSelectedFollower = Fleet->SelectedFollowerID;
+			bPilotAffectedSelectionLogged = false;
 			SetScenarioPhase(EESCROWScenarioPhase::PhaseC_DisruptionDetection, TEXT("RallyBReachedPlusDelay"));
 			SetAffectedFollowerID(PilotAffectedFollowerID, TEXT("DisruptionOnset"));
 			const FString OnsetEventID = FString::Printf(TEXT("DISRUPTION_ONSET_F%d"), PilotAffectedFollowerID);
@@ -1924,6 +1943,7 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 
 	case EESCROWScenarioPhase::PhaseC_DisruptionDetection:
 		PilotReassertFault(Fleet, World);
+		PilotTrackDetection(Fleet, EventLog, World);
 		if (Fleet->bTakeoverActive)
 		{
 			const int32 TakenOver = Fleet->ActiveTakeoverFollowerID;
@@ -1971,6 +1991,40 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 }
 
 // =============================== Pilot fault (hold + recovery point) ===============================
+
+void UESCROWScenarioDirectorSubsystem::PilotTrackDetection(UESCROWFleetSubsystem* Fleet, UESCROWEventLogSubsystem* EventLog, UWorld* World)
+{
+	const int32 Selected = Fleet->SelectedFollowerID;
+	const double Since = World->GetTimeSeconds() - PilotDisruptionOnsetWorldSeconds;
+
+	// The affected follower already being selected at onset counts as an immediate detection only
+	// once the operator interacts; log it the first time we see it selected after onset.
+	if (Selected == PilotLastSeenSelectedFollower && (bPilotAffectedSelectionLogged || Selected != PilotAffectedFollowerID))
+	{
+		return;
+	}
+	const bool bChanged = (Selected != PilotLastSeenSelectedFollower);
+	PilotLastSeenSelectedFollower = Selected;
+
+	const bool bAffected = (Selected == PilotAffectedFollowerID);
+	if (bAffected && !bPilotAffectedSelectionLogged)
+	{
+		bPilotAffectedSelectionLogged = true;
+		LogScenarioEvent(TEXT("AffectedFollowerDetected"), Selected, FString::Printf(TEXT("Affected follower selected %.1f s after onset."), Since));
+		if (EventLog)
+		{
+			EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("AffectedFollowerDetected"),
+				FString::Printf(TEXT("Operator selected affected follower F%d."), Selected), ActiveTasking.TaskingID, Selected, CurrentPlanValidity,
+				FString::Printf(TEXT("{\"DetectionLatencySeconds\":%.3f,\"AlreadySelectedAtOnset\":%s}"), Since, bChanged ? TEXT("false") : TEXT("true")));
+		}
+	}
+	else if (bChanged && !bAffected && Selected > 0 && EventLog)
+	{
+		EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("WrongFollowerSelected"),
+			FString::Printf(TEXT("Operator selected F%d; affected follower is F%d."), Selected, PilotAffectedFollowerID), ActiveTasking.TaskingID, Selected, CurrentPlanValidity,
+			FString::Printf(TEXT("{\"SelectedFollowerID\":%d,\"AffectedFollowerID\":%d,\"SecondsSinceOnset\":%.3f}"), Selected, PilotAffectedFollowerID, Since));
+	}
+}
 
 AActor* UESCROWScenarioDirectorSubsystem::PilotFindConvoyManager()
 {
@@ -2240,8 +2294,206 @@ namespace
 {
 	const FName RallyMarkerTagC(TEXT("ESCROW_RallyMarker_C"));
 	constexpr double PlanTriggerRadiusCm = 25000.0;     // command vehicle within 250 m of Rally C
-	constexpr double PlanAltMatchRadiusCm = 2200.0;     // a waypoint this close to an ALT position counts as assigned there
+	constexpr double PlanAltMatchRadiusCm = 3000.0;     // a waypoint this close to an ALT position counts as assigned there
 	constexpr double PlanBlockedClearRadiusCm = 3000.0; // ... and must stay this far from every blocked slot
+
+	// Rally B formation (line abreast, centred on the Rally B zone).
+	const FName FormationTagPrefix(TEXT("ESCROW_RallyMarker_FORM"));
+	constexpr double FormationSpacingCm = 3000.0;        // 30 m between slots
+	constexpr double FormationMatchRadiusCm = 2200.0;    // a follower this close to its own slot counts as in place
+	constexpr double FormationHoldSeconds = 3.0;         // all in place for this long = formation held
+	constexpr double FormationReminderSeconds = 60.0;    // nudge the operator this often while waiting
+	constexpr double FormationFallbackSeconds = 600.0;   // give up waiting (logged) so a stuck run cannot hang
+
+	// Fleet status reports: one at each phase change, plus one this often otherwise.
+	constexpr double FleetReportIntervalSeconds = 150.0;
+}
+
+// =============================== Pilot Phase B (Rally B formation) ===============================
+
+bool UESCROWScenarioDirectorSubsystem::PilotEvaluateFormation(FString& OutDetail)
+{
+	bool bAllInPlace = true;
+	OutDetail.Reset();
+	for (int32 s = 0; s < PilotSlotCount; ++s)
+	{
+		const int32 FollowerID = PilotFormFollowers[s];
+		const AActor* Follower = PilotGetFollowerActor(FollowerID);
+		if (!Follower)
+		{
+			bAllInPlace = false;
+			continue;
+		}
+		const double Dist = FVector::Dist2D(Follower->GetActorLocation(), PilotFormLocations[s]);
+		if (Dist > FormationMatchRadiusCm)
+		{
+			bAllInPlace = false;
+			OutDetail += (OutDetail.IsEmpty() ? TEXT("") : TEXT("; ")) + FString::Printf(TEXT("%s is %.0f m from its slot"), *ESCROWFollowerCallsign(FollowerID), Dist / 100.0);
+		}
+	}
+	if (bAllInPlace)
+	{
+		OutDetail = TEXT("All followers are in formation.");
+	}
+	return bAllInPlace;
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotPostFormation(UESCROWFleetSubsystem* Fleet, UESCROWEventLogSubsystem* EventLog, UWorld* World)
+{
+	bPilotFormationPosted = true;
+	bPilotFormationSatisfied = false;
+	PilotFormationPostedSeconds = World->GetTimeSeconds();
+	PilotFormationLastReminderSeconds = PilotFormationPostedSeconds;
+	PilotFormationHeldSince = -1.0;
+
+	const AActor* BZone = FindZoneActorByTag(ZoneTag_RallyB);
+	const FVector Center = BZone ? BZone->GetActorLocation() : FVector::ZeroVector;
+	// Facing +Y (the direction of travel) the right-hand side is -X. Slots run left to right.
+	const FVector Right(-1.0, 0.0, 0.0);
+	const double SlotOffsets[PilotSlotCount] = { -1.5, -0.5, 0.5, 1.5 };
+	const double GroundZ = PilotFindGroundZ(FVector(Center.X, Center.Y, 120.0), 120.0);
+
+	FString Order;
+	FString SlotsJson;
+	for (int32 s = 0; s < PilotSlotCount; ++s)
+	{
+		FVector Loc = Center + Right * (SlotOffsets[s] * FormationSpacingCm);
+		Loc.Z = GroundZ;
+		PilotFormLocations[s] = Loc;
+		const FString Name = ESCROWFollowerCallsign(PilotFormFollowers[s]);
+		Order += (s > 0 ? TEXT(", ") : TEXT("")) + Name;
+		SlotsJson += (s > 0 ? TEXT(",") : TEXT("")) + FString::Printf(TEXT("\"%s\""), *Loc.ToCompactString());
+		PilotSpawnPlanMarker(Loc, FString::Printf(TEXT("FORM %d\n%s"), s + 1, *Name), FColor(255, 235, 120), false,
+			FName(*FString::Printf(TEXT("%s%d"), *FormationTagPrefix.ToString(), s + 1)), -90.0);
+	}
+
+	PostTasking(TEXT("TASK_B_FORMATION"), TEXT("Arrange the fleet into the Rally B formation"), EESCROWScenarioPhase::PhaseB_RallyBreakout,
+		TEXT("ArrangeFormation"), 0, TEXT("Valid"), TEXT("FORMATION_ONSET"));
+
+	const FString Instruction = FString::Printf(TEXT("The convoy has reached Rally B. Arrange the followers in a line across the road, left to right: %s. Each position is marked on the ground (yellow FORM pads) and on the GPS. On the GPS page, select a follower, place a waypoint on its position and confirm it. The mission continues once every follower is in place."), *Order);
+	Fleet->PostNotification(EESCROWNotificationKind::Info, EESCROWMessageSeverity::Info, 0, TEXT("RALLY B FORMATION"),
+		FString::Printf(TEXT("Arrange the followers left to right: %s."), *Order), TEXT("GPS"));
+	Fleet->AddMissionReport(TEXT("RPT-0002B-FORMATION"), TEXT("Rally B Formation"), TEXT("ScenarioDirector"), Instruction, false, false);
+
+	LogScenarioEvent(TEXT("FormationOnset"), 0, FString::Printf(TEXT("Rally B formation posted: %s."), *Order));
+	if (EventLog)
+	{
+		EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("FormationOnset"), TEXT("Rally B formation posted."), ActiveTasking.TaskingID, 0, CurrentPlanValidity,
+			FString::Printf(TEXT("{\"Order\":\"%s\",\"Slots\":[%s],\"MatchRadiusCm\":%.0f}"), *Order, *SlotsJson, FormationMatchRadiusCm));
+	}
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotTickFormation(UESCROWFleetSubsystem* Fleet, UESCROWEventLogSubsystem* EventLog, UWorld* World)
+{
+	if (!bPilotFormationPosted)
+	{
+		PilotPostFormation(Fleet, EventLog, World);
+		return;
+	}
+	if (bPilotFormationSatisfied)
+	{
+		return;
+	}
+
+	const double Now = World->GetTimeSeconds();
+	FString Detail;
+	const bool bInPlace = PilotEvaluateFormation(Detail);
+	if (bInPlace)
+	{
+		if (PilotFormationHeldSince < 0.0)
+		{
+			PilotFormationHeldSince = Now;
+		}
+	}
+	else
+	{
+		PilotFormationHeldSince = -1.0;
+	}
+
+	const bool bHeld = bInPlace && (Now - PilotFormationHeldSince) >= FormationHoldSeconds;
+	const bool bTimedOut = !bHeld && (Now - PilotFormationPostedSeconds) >= FormationFallbackSeconds;
+	if (bHeld || bTimedOut)
+	{
+		bPilotFormationSatisfied = true;
+		PilotDisruptionOnsetWorldSeconds = Now; // the disruption delay counts from here
+		AcknowledgeActiveTasking(bHeld ? TEXT("FormationHeld") : TEXT("FormationTimeout"));
+		const FString Type = bHeld ? TEXT("FormationSatisfied") : TEXT("FormationTimeout");
+		LogScenarioEvent(*Type, 0, Detail);
+		if (EventLog)
+		{
+			FString Clean = Detail;
+			Clean.ReplaceInline(TEXT("\""), TEXT("'"));
+			EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), Type, bHeld ? TEXT("Formation held.") : TEXT("Formation not completed; continuing."), ActiveTasking.TaskingID, 0, CurrentPlanValidity,
+				FString::Printf(TEXT("{\"SecondsSinceOnset\":%.2f,\"Detail\":\"%s\"}"), Now - PilotFormationPostedSeconds, *Clean));
+		}
+		Fleet->PostNotification(EESCROWNotificationKind::Info, EESCROWMessageSeverity::Info, 0, bHeld ? TEXT("FORMATION SET") : TEXT("MOVING ON"),
+			bHeld ? TEXT("All followers are in position. Stand by.") : TEXT("The formation was not completed in time. Stand by."), TEXT("GPS"));
+		return;
+	}
+
+	if (!bInPlace && (Now - PilotFormationLastReminderSeconds) >= FormationReminderSeconds)
+	{
+		PilotFormationLastReminderSeconds = Now;
+		LogScenarioEvent(TEXT("FormationReminder"), 0, Detail);
+		if (EventLog)
+		{
+			FString Clean = Detail;
+			Clean.ReplaceInline(TEXT("\""), TEXT("'"));
+			EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("FormationReminder"), TEXT("Formation still incomplete."), ActiveTasking.TaskingID, 0, CurrentPlanValidity,
+				FString::Printf(TEXT("{\"SecondsSinceOnset\":%.2f,\"Detail\":\"%s\"}"), Now - PilotFormationPostedSeconds, *Clean));
+		}
+		Fleet->PostNotification(EESCROWNotificationKind::Warning, EESCROWMessageSeverity::Warning, 0, TEXT("FORMATION NOT SET"), Detail, TEXT("GPS"));
+	}
+}
+
+// =============================== Fleet status reports ===============================
+
+void UESCROWScenarioDirectorSubsystem::PilotMaybePostFleetReport(UESCROWFleetSubsystem* Fleet, UWorld* World)
+{
+	const double Now = World->GetTimeSeconds();
+	if (PilotLastReportedPhase == EESCROWScenarioPhase::None)
+	{
+		// The first Fleet Status report is seeded at startup; start counting from here.
+		PilotLastReportedPhase = CurrentPhase;
+		PilotLastFleetReportSeconds = Now;
+		return;
+	}
+	if (CurrentPhase == EESCROWScenarioPhase::Complete || CurrentPhase == EESCROWScenarioPhase::Aborted)
+	{
+		return;
+	}
+	const bool bPhaseChanged = (CurrentPhase != PilotLastReportedPhase);
+	if (!bPhaseChanged && (Now - PilotLastFleetReportSeconds) < FleetReportIntervalSeconds)
+	{
+		return;
+	}
+
+	const AActor* CV = PilotCommandVehicle.Get();
+	if (!CV)
+	{
+		return;
+	}
+	PilotLastReportedPhase = CurrentPhase;
+	PilotLastFleetReportSeconds = Now;
+	++PilotFleetReportCount;
+
+	const int32 Minutes = FMath::FloorToInt(Now / 60.0);
+	const int32 Seconds = FMath::FloorToInt(FMath::Fmod(Now, 60.0));
+	FString Body = FString::Printf(TEXT("Fleet status at %02d:%02d (%s).\n"), Minutes, Seconds, bPhaseChanged ? TEXT("phase change") : TEXT("periodic update"));
+	Body += FString::Printf(TEXT("Command vehicle: %.0f m/s.\n"), CV->GetVelocity().Size() / 100.0);
+	for (int32 FollowerID = 1; FollowerID <= PilotSlotCount; ++FollowerID)
+	{
+		const AActor* Follower = PilotGetFollowerActor(FollowerID);
+		if (!Follower)
+		{
+			Body += FString::Printf(TEXT("%s: no data.\n"), *ESCROWFollowerCallsign(FollowerID));
+			continue;
+		}
+		Body += FString::Printf(TEXT("%s: %.0f m from the command vehicle, %.0f m/s.\n"), *ESCROWFollowerCallsign(FollowerID),
+			FVector::Dist2D(Follower->GetActorLocation(), CV->GetActorLocation()) / 100.0, Follower->GetVelocity().Size() / 100.0);
+	}
+	Fleet->AddMissionReport(FString::Printf(TEXT("RPT-FLEET-%02d"), PilotFleetReportCount), FString::Printf(TEXT("Fleet Update %d"), PilotFleetReportCount + 1),
+		TEXT("ConvoyTelemetryManager"), Body, false, true);
 }
 
 bool UESCROWScenarioDirectorSubsystem::PilotReadConvoyVectorArray(const TCHAR* ArrayName, int32 Index, FVector& Out)
@@ -2315,7 +2567,26 @@ AActor* UESCROWScenarioDirectorSubsystem::PilotSpawnPlanMarker(const FVector& Lo
 	Root->SetWorldLocation(Location);
 	Root->RegisterComponent();
 
-	if (UStaticMesh* Cube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")))
+	// A blocked slot is a small cluster of rocks (the same rock mesh the map uses), so the
+	// blockage reads as a real obstacle rather than a coloured box.
+	UStaticMesh* RockMesh = bBlocker ? LoadObject<UStaticMesh>(nullptr, TEXT("/Game/BattleField_Desert/Landscape/Rocks/SM_Rock_2.SM_Rock_2")) : nullptr;
+	if (RockMesh)
+	{
+		struct FRockSpec { double X; double Y; double Scale; double Yaw; };
+		const FRockSpec Rocks[3] = { { 0.0, 0.0, 1.5, 20.0 }, { 650.0, -350.0, 1.1, 130.0 }, { -600.0, 400.0, 1.2, 250.0 } };
+		for (int32 i = 0; i < 3; ++i)
+		{
+			UStaticMeshComponent* Rock = NewObject<UStaticMeshComponent>(Marker, *FString::Printf(TEXT("PlanRock%d"), i));
+			Rock->SetStaticMesh(RockMesh);
+			Rock->SetupAttachment(Root);
+			Rock->SetRelativeLocation(FVector(Rocks[i].X, Rocks[i].Y, -20.0));
+			Rock->SetRelativeRotation(FRotator(0.0, Rocks[i].Yaw, 0.0));
+			Rock->SetRelativeScale3D(FVector(Rocks[i].Scale));
+			Rock->SetCollisionProfileName(TEXT("BlockAll"));
+			Rock->RegisterComponent();
+		}
+	}
+	if (UStaticMesh* Cube = RockMesh ? nullptr : LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")))
 	{
 		UStaticMeshComponent* Mesh = NewObject<UStaticMeshComponent>(Marker, TEXT("PlanMesh"));
 		Mesh->SetStaticMesh(Cube);
@@ -2508,7 +2779,7 @@ bool UESCROWScenarioDirectorSubsystem::PilotEvaluatePlan(FString& OutDetail)
 			}
 			else if (Alt < 0 || AltDist > PlanAltMatchRadiusCm)
 			{
-				Problem = TEXT("waypoint is not on an ALT position");
+				Problem = FString::Printf(TEXT("waypoint is %.0f m from the nearest ALT position (it must be within %.0f m)"), AltDist / 100.0, PlanAltMatchRadiusCm / 100.0);
 			}
 			else if (AltUsed.Contains(Alt))
 			{
@@ -2573,6 +2844,7 @@ void UESCROWScenarioDirectorSubsystem::PilotTickPlanRepair(UESCROWFleetSubsystem
 		}
 		const bool bFirstSight = (Last == nullptr);
 		PilotLastLoggedAssignment.Add(f, Key);
+		bPilotValidatePrompted = false; // the plan changed, so prompt for a (re)check again once complete
 		if (bFirstSight || !bHasTarget)
 		{
 			continue;
@@ -2591,6 +2863,32 @@ void UESCROWScenarioDirectorSubsystem::PilotTickPlanRepair(UESCROWFleetSubsystem
 			bPilotFirstAssignmentLogged = true;
 			AcknowledgeActiveTasking(TEXT("OperatorAssignedWaypoint"));
 			LogEv(TEXT("PlanRepairFirstAssignment"), f, TEXT("First reassignment."), FString::Printf(TEXT("{\"LatencySeconds\":%.2f}"), Now - PilotPlanRepairOnsetSeconds));
+		}
+	}
+
+	// Once every blocked follower has a waypoint, tell the operator the plan can be checked.
+	// Without this prompt participants did not realise the Validate Plan report needed confirming.
+	if (!bPilotValidatePassed && !bPilotValidatePrompted)
+	{
+		bool bAllAssigned = true;
+		for (int32 f = 1; f <= PilotSlotCount; ++f)
+		{
+			if (!PilotSlotBlocked[f - 1])
+			{
+				continue;
+			}
+			FVector Target = FVector::ZeroVector;
+			if (PilotReadConvoyIntArray(TEXT("PathModes"), f, -1) != 4 || !PilotReadConvoyVectorArray(TEXT("ActiveTargetLocations"), f, Target))
+			{
+				bAllAssigned = false;
+			}
+		}
+		if (bAllAssigned)
+		{
+			bPilotValidatePrompted = true;
+			LogEv(TEXT("PlanReadyToValidate"), 0, TEXT("All blocked followers have waypoints."), FString::Printf(TEXT("{\"SecondsSinceOnset\":%.2f}"), Now - PilotPlanRepairOnsetSeconds));
+			Fleet->PostNotification(EESCROWNotificationKind::Info, EESCROWMessageSeverity::Info, 0, TEXT("CHECK THE PLAN"),
+				TEXT("Both new positions are set. Open REPORTS and confirm the Validate Plan report to check the plan."), TEXT("REPORTS"));
 		}
 	}
 
