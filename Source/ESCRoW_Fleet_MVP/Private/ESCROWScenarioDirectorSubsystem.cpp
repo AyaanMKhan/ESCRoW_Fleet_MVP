@@ -2881,9 +2881,7 @@ void UESCROWScenarioDirectorSubsystem::PilotPostFormation(UESCROWFleetSubsystem*
 		TEXT("ArrangeFormation"), 0, TEXT("Valid"), TEXT("FORMATION_ONSET"));
 
 	const FString Instruction = FString::Printf(TEXT("The convoy has reached Rally B. Arrange the followers in a line across the road, left to right: %s. Each position is marked on the ground (yellow FORM pads) and on the GPS. On the GPS page, select a follower, place a waypoint on its position and confirm it. The mission continues once every follower is in place."), *Order);
-	Fleet->PostNotification(EESCROWNotificationKind::Info, EESCROWMessageSeverity::Info, 0, TEXT("RALLY B FORMATION"),
-		FString::Printf(TEXT("Arrange the followers left to right: %s."), *Order), TEXT("GPS"));
-	PilotPostOrder(Fleet, EventLog, 4, TEXT("RPT-0002B-FORMATION"), TEXT("ORDER 4 - Arrange the Rally B formation"), Instruction, false, false);
+	PilotPostOrder(Fleet, EventLog, 4, TEXT("RPT-0002B-FORMATION"), TEXT("ORDER 4 - Arrange the Rally B formation"), Instruction, false, true);
 
 	LogScenarioEvent(TEXT("FormationOnset"), 0, FString::Printf(TEXT("Rally B formation posted: %s."), *Order));
 	if (EventLog)
@@ -3161,7 +3159,7 @@ void UESCROWScenarioDirectorSubsystem::PilotPostValidateReport(UESCROWFleetSubsy
 	++PilotValidateAttempt;
 	PilotValidateReportID = FString::Printf(TEXT("RPT-0005-PLAN-VALIDATE-%d"), PilotValidateAttempt);
 	Fleet->AddMissionReport(PilotValidateReportID, TEXT("Validate Plan"), TEXT("ScenarioDirector"),
-		TEXT("Confirm this report once WOLF and LYNX each have a waypoint on a different ALT position. The plan is then checked and you are told if anything is still wrong."), true, bNotify);
+		TEXT("Confirm this report once WOLF and LYNX each have a waypoint on a different ALT position. The plan is then checked and you are told if anything is still wrong."), true, true);
 }
 
 void UESCROWScenarioDirectorSubsystem::PilotPostPlanRepair(UESCROWFleetSubsystem* Fleet, UESCROWEventLogSubsystem* EventLog, UWorld* World, const FVector& CVLocation)
@@ -3243,7 +3241,7 @@ void UESCROWScenarioDirectorSubsystem::PilotPostPlanRepair(UESCROWFleetSubsystem
 		FString::Printf(TEXT("The planned positions for %s are blocked. Reassign them to the ALT positions, then confirm the Validate Plan report."), *BlockedNames), TEXT("REPORTS"));
 	Fleet->AddMissionReport(TEXT("RPT-0004-PLAN-REPAIR"), TEXT("Rally C Plan Repair"), TEXT("ScenarioDirector"),
 		FString::Printf(TEXT("The convoy has reached Rally C. The plan was for %s to take positions P1, P2, P3 and P4 in a line. Positions P2 and P3 are blocked (red), so %s cannot use them.\n\nAssign %s a new position each: use the two cyan ALT positions beyond Rally C. On the GPS page, select the follower, place a waypoint on its ALT position and confirm it.\n\nWhen both are reassigned, confirm the Validate Plan report."),
-			*FString::Printf(TEXT("%s, %s, %s and %s"), *ESCROWFollowerCallsign(1), *ESCROWFollowerCallsign(2), *ESCROWFollowerCallsign(3), *ESCROWFollowerCallsign(4)), *BlockedNames, *BlockedNames), false, false);
+			*FString::Printf(TEXT("%s, %s, %s and %s"), *ESCROWFollowerCallsign(1), *ESCROWFollowerCallsign(2), *ESCROWFollowerCallsign(3), *ESCROWFollowerCallsign(4)), *BlockedNames, *BlockedNames), false, true);
 	PilotPostValidateReport(Fleet, false);
 }
 
@@ -3417,7 +3415,7 @@ void UESCROWScenarioDirectorSubsystem::PilotTickPlanRepair(UESCROWFleetSubsystem
 				ValidateActiveTasking(TEXT("PilotValidateReport"));
 				PilotAuthorizeReportID = TEXT("RPT-0006-PLAN-AUTHORIZE");
 				Fleet->AddMissionReport(PilotAuthorizeReportID, TEXT("Authorize Plan"), TEXT("ScenarioDirector"),
-					TEXT("The checked plan is valid. Confirm this report to authorize it and send the convoy to its final positions."), true, false);
+					TEXT("The checked plan is valid. Confirm this report to authorize it and send the convoy to its final positions."), true, true);
 				Fleet->PostNotification(EESCROWNotificationKind::Info, EESCROWMessageSeverity::Info, 0, TEXT("PLAN VALID"),
 					TEXT("Confirm the Authorize Plan report to execute it."), TEXT("REPORTS"));
 			}

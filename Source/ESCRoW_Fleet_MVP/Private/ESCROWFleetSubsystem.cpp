@@ -630,6 +630,12 @@ void UESCROWFleetSubsystem::GenerateInitialMissionReports(const FString& Scenari
 		EventLog->RecordReportFieldSimple(Brief.ReportID, TEXT("Text"), TEXT("Generated"), Brief.Title, FString(), -1, FString());
 		EventLog->RecordReportFieldSimple(FleetStatus.ReportID, TEXT("FleetTelemetry"), TEXT("Generated"), FleetStatus.Title, FString(), -1, FString());
 	}
+
+	// Every report raises a toast. The seeded reports are long / table-based, so the toast points at the Reports page.
+	PostNotification(EESCROWNotificationKind::Report, EESCROWMessageSeverity::Info, 0, TEXT("NEW REPORT: Mission Brief"),
+		TEXT("Your mission brief is ready. Read it on the REPORTS page."), TEXT("REPORTS"), 0);
+	PostNotification(EESCROWNotificationKind::Report, EESCROWMessageSeverity::Info, 0, TEXT("NEW REPORT: Fleet Status"),
+		TEXT("Live fleet status is available on the REPORTS page."), TEXT("REPORTS"), 1);
 }
 
 FString UESCROWFleetSubsystem::GetFollowerCallsign(int32 FollowerID) const
