@@ -433,6 +433,7 @@ FString UESCROWEventLogSubsystem::BuildRunConfigJSON(const FESCROWRunConfig& Con
 	Lines.Add(FString::Printf(TEXT("  \"ScenarioVersion\": \"%s\","), *EscapeJSONField(Config.ScenarioVersion)));
 	Lines.Add(FString::Printf(TEXT("  \"ConditionID\": \"%s\","), *EscapeJSONField(Config.ConditionID)));
 	Lines.Add(FString::Printf(TEXT("  \"SupportMode\": \"%s\","), *EscapeJSONField(Config.SupportMode)));
+	Lines.Add(FString::Printf(TEXT("  \"SupportProfile\": \"%s\","), *EscapeJSONField(Config.SupportProfile.IsEmpty() ? TEXT("TrainingFull") : *Config.SupportProfile)));
 	Lines.Add(FString::Printf(TEXT("  \"DisplayMode\": \"%s\","), *EscapeJSONField(Config.DisplayMode)));
 	Lines.Add(FString::Printf(TEXT("  \"VehicleControlRole\": \"%s\","), *EscapeJSONField(Config.VehicleControlRole)));
 	Lines.Add(FString::Printf(TEXT("  \"WorkloadLevel\": \"%s\","), *EscapeJSONField(Config.WorkloadLevel)));
@@ -465,6 +466,7 @@ FString UESCROWEventLogSubsystem::BuildRunSummaryJSON(const FString& ExportMode,
 	Lines.Add(FString::Printf(TEXT("  \"RunFolder\": \"%s\","), *EscapeJSONField(CurrentRunFolder)));
 	Lines.Add(FString::Printf(TEXT("  \"ScenarioID\": \"%s\","), *EscapeJSONField(ActiveRunConfig.ScenarioID)));
 	Lines.Add(FString::Printf(TEXT("  \"ConditionID\": \"%s\","), *EscapeJSONField(ActiveRunConfig.ConditionID)));
+	Lines.Add(FString::Printf(TEXT("  \"SupportProfile\": \"%s\","), *EscapeJSONField(ActiveRunConfig.SupportProfile.IsEmpty() ? TEXT("TrainingFull") : *ActiveRunConfig.SupportProfile)));
 	Lines.Add(FString::Printf(TEXT("  \"UncertaintyLevel\": \"%s\","), *EscapeJSONField(ActiveRunConfig.UncertaintyLevel.IsEmpty() ? TEXT("Unspecified") : *ActiveRunConfig.UncertaintyLevel)));
 	Lines.Add(FString::Printf(TEXT("  \"ProjectionSupport\": \"%s\","), *EscapeJSONField(ActiveRunConfig.ProjectionSupport.IsEmpty() ? TEXT("Unspecified") : *ActiveRunConfig.ProjectionSupport)));
 	Lines.Add(FString::Printf(TEXT("  \"RunSeed\": %d,"), ActiveRunConfig.RunSeed));

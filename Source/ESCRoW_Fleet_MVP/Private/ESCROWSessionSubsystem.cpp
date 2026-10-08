@@ -25,6 +25,7 @@ void UESCROWSessionSubsystem::ResetSessionState()
 	ComplexityCondition = EESCROWComplexityCondition::LowComplexity;
 	DisplayMode = EESCROWDisplayMode::HUDPrimary;
 	VehicleControlRole = EESCROWVehicleControlRole::Driving;
+	SupportProfile = EESCROWSupportProfile::TrainingFull;
 	StartTimestampLocal.Empty();
 	StartTimestampUTC.Empty();
 	EndTimestamp.Empty();
@@ -213,6 +214,76 @@ EESCROWDisplayMode UESCROWSessionSubsystem::GetDisplayMode() const
 FString UESCROWSessionSubsystem::GetDisplayModeName() const
 {
 	return (DisplayMode == EESCROWDisplayMode::ConsolePrimary) ? TEXT("Console Primary") : TEXT("HUD Primary");
+}
+
+void UESCROWSessionSubsystem::SetSupportProfile(EESCROWSupportProfile NewSupportProfile)
+{
+	SupportProfile = NewSupportProfile;
+}
+
+void UESCROWSessionSubsystem::SetSupportProfileByIndex(int32 Index)
+{
+	SupportProfile = static_cast<EESCROWSupportProfile>(FMath::Clamp(Index, 0, 3));
+}
+
+EESCROWSupportProfile UESCROWSessionSubsystem::GetSupportProfile() const
+{
+	return SupportProfile;
+}
+
+FString UESCROWSessionSubsystem::GetSupportProfileName() const
+{
+	switch (SupportProfile)
+	{
+	case EESCROWSupportProfile::ManualReduced: return TEXT("ManualReduced");
+	case EESCROWSupportProfile::ScaffoldedHigh: return TEXT("ScaffoldedHigh");
+	case EESCROWSupportProfile::NoisyFragmented: return TEXT("NoisyFragmented");
+	default: return TEXT("TrainingFull");
+	}
+}
+
+EESCROWSupportProfile UESCROWSessionSubsystem::ParseSupportProfile(const FString& Text, bool& bValid)
+{
+	bValid = true;
+	const FString T = Text.TrimStartAndEnd();
+	if (T.Equals(TEXT("TrainingFull"), ESearchCase::IgnoreCase)) { return EESCROWSupportProfile::TrainingFull; }
+	if (T.Equals(TEXT("ManualReduced"), ESearchCase::IgnoreCase)) { return EESCROWSupportProfile::ManualReduced; }
+	if (T.Equals(TEXT("ScaffoldedHigh"), ESearchCase::IgnoreCase)) { return EESCROWSupportProfile::ScaffoldedHigh; }
+	if (T.Equals(TEXT("NoisyFragmented"), ESearchCase::IgnoreCase)) { return EESCROWSupportProfile::NoisyFragmented; }
+	bValid = false;
+	return EESCROWSupportProfile::TrainingFull;
+}
+
+// NoisyFragmented has no behavior of its own yet; it follows ManualReduced for every query below.
+bool UESCROWSessionSubsystem::ShouldShowSpecificTakeoverCue() const
+{
+	return SupportProfile == EESCROWSupportProfile::TrainingFull || SupportProfile == EESCROWSupportProfile::ScaffoldedHigh;
+}
+
+bool UESCROWSessionSubsystem::ShouldShowAffectedFollowerInAlert() const
+{
+	return SupportProfile == EESCROWSupportProfile::TrainingFull || SupportProfile == EESCROWSupportProfile::ScaffoldedHigh;
+}
+
+bool UESCROWSessionSubsystem::ShouldAutoRequestTakeoverAtDisruption() const
+{
+	// ScaffoldedHigh flags the follower (a recommendation); the operator still has to take control.
+	return SupportProfile == EESCROWSupportProfile::TrainingFull || SupportProfile == EESCROWSupportProfile::ScaffoldedHigh;
+}
+
+bool UESCROWSessionSubsystem::ShouldSpawnRecoveryMarkerAtDisruptionOnset() const
+{
+	return SupportProfile == EESCROWSupportProfile::TrainingFull;
+}
+
+bool UESCROWSessionSubsystem::ShouldUseGenericAnomalyText() const
+{
+	return SupportProfile == EESCROWSupportProfile::ManualReduced || SupportProfile == EESCROWSupportProfile::NoisyFragmented;
+}
+
+bool UESCROWSessionSubsystem::ShouldShowSpecificValidationReasons() const
+{
+	return SupportProfile == EESCROWSupportProfile::TrainingFull || SupportProfile == EESCROWSupportProfile::ScaffoldedHigh;
 }
 
 void UESCROWSessionSubsystem::SetVehicleControlRole(EESCROWVehicleControlRole NewVehicleControlRole)

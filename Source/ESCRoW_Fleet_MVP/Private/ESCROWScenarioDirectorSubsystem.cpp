@@ -62,6 +62,41 @@ namespace
 		return Sha.Len() >= 7 ? Sha.Left(7) : FString(TEXT("UNKNOWN_NO_GIT"));
 	}
 
+	// Dev/test override for the support profile, used only when the run config names none
+	// (e.g. escrow.SupportProfile ManualReduced before pressing Start Session).
+	TAutoConsoleVariable<FString> CVarSupportProfile(TEXT("escrow.SupportProfile"), TEXT(""),
+		TEXT("Support profile override when the run config has none: TrainingFull, ManualReduced, ScaffoldedHigh, NoisyFragmented."), ECVF_Default);
+
+	// Resolves the run's support profile (run config > console override > session default),
+	// writes the canonical name back into the config and the session, and returns the profile.
+	// The console override is only honored for the dev fallback run (bAllowConsoleOverride), so it can
+	// never silently override a profile chosen in the Experiment Setup menu.
+	EESCROWSupportProfile ResolveSupportProfile(UESCROWSessionSubsystem* Session, FESCROWRunConfig& RunConfig, FString& OutSource, bool bAllowConsoleOverride)
+	{
+		bool bValid = false;
+		EESCROWSupportProfile Profile = Session ? Session->GetSupportProfile() : EESCROWSupportProfile::TrainingFull;
+		OutSource = TEXT("SessionSelection"); // set by the Experiment Setup menu (or the TrainingFull default)
+		const FString FromConfig = RunConfig.SupportProfile.TrimStartAndEnd();
+		const FString FromCVar = CVarSupportProfile.GetValueOnGameThread().TrimStartAndEnd();
+		if (!FromConfig.IsEmpty())
+		{
+			const EESCROWSupportProfile Parsed = UESCROWSessionSubsystem::ParseSupportProfile(FromConfig, bValid);
+			if (bValid) { Profile = Parsed; OutSource = TEXT("RunConfig"); }
+			else { OutSource = TEXT("RunConfigInvalid_FellBack"); }
+		}
+		else if (bAllowConsoleOverride && !FromCVar.IsEmpty())
+		{
+			const EESCROWSupportProfile Parsed = UESCROWSessionSubsystem::ParseSupportProfile(FromCVar, bValid);
+			if (bValid) { Profile = Parsed; OutSource = TEXT("ConsoleVariable"); }
+		}
+		if (Session)
+		{
+			Session->SetSupportProfile(Profile);
+			RunConfig.SupportProfile = Session->GetSupportProfileName();
+		}
+		return Profile;
+	}
+
 	FString FactorCode(const FString& Level)
 	{
 		return Level.Equals(TEXT("Low"), ESearchCase::IgnoreCase) ? TEXT("L") : (Level.Equals(TEXT("High"), ESearchCase::IgnoreCase) ? TEXT("H") : TEXT("U"));
@@ -687,8 +722,10 @@ void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()
 		{
 			RunConfig.RunValidity = TEXT("Valid");
 		}
+		FString SupportSource;
+		ResolveSupportProfile(Session, RunConfig, SupportSource, false);
 		EventLog->BeginRunFromConfig(RunConfig);
-		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("RunInitialized"), TEXT("Level loaded and run initialized from menu-provided config"), FString(), 0, TEXT("Unspecified"), TEXT("{\"fallback\":false}"));
+		EventLog->RecordScenarioEventSimple(CurrentScenarioStep, TEXT("RunInitialized"), TEXT("Level loaded and run initialized from menu-provided config"), FString(), 0, TEXT("Unspecified"), FString::Printf(TEXT("{\"fallback\":false,\"SupportProfile\":\"%s\",\"SupportProfileSource\":\"%s\"}"), *RunConfig.SupportProfile, *SupportSource));
 		EventLog->StartHeartbeat();
 		return;
 	}
@@ -726,6 +763,8 @@ void UESCROWScenarioDirectorSubsystem::InitializeRunDataForCurrentLevel()
 		RunConfig.Notes = TEXT("Fallback run: scenario map launched directly without going through the setup menu (no pending run config was found).");
 		RunConfig.RunID = Session->GenerateRunID(RunConfig.ScenarioID, RunConfig.ConditionID, RunConfig.ParticipantID);
 
+		FString SupportSource;
+		ResolveSupportProfile(Session, RunConfig, SupportSource, true);
 		EventLog->BeginRunFromConfig(RunConfig);
 		UE_LOG(LogTemp, Error, TEXT("ESCROWScenarioDirector: INVALID RUN - DEVELOPMENT ONLY. Launched without Experiment Setup; data is NOT valid participant data (RunValidity=DevelopmentOnly)."));
 		if (UWorld* BannerWorld = GetWorld())
@@ -1900,22 +1939,77 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 			bPilotAffectedSelectionLogged = false;
 			SetScenarioPhase(EESCROWScenarioPhase::PhaseC_DisruptionDetection, TEXT("RallyBReachedPlusDelay"));
 			SetAffectedFollowerID(PilotAffectedFollowerID, TEXT("DisruptionOnset"));
+			bPilotRecoveryMarkerSpawned = false;
 			const FString OnsetEventID = FString::Printf(TEXT("DISRUPTION_ONSET_F%d"), PilotAffectedFollowerID);
-			PostTasking(TEXT("TASK_C_DISRUPTION"), TEXT("Detect disruption and take over affected follower"), EESCROWScenarioPhase::PhaseC_DisruptionDetection,
-				TEXT("TakeOverAffectedFollower"), PilotAffectedFollowerID, TEXT("Valid"), OnsetEventID);
+
+			// Cue level comes from the support profile (ground truth below is identical in every profile).
+			const UESCROWSessionSubsystem* Support = PilotGetSession();
+			const bool bGenericCue = Support && Support->ShouldUseGenericAnomalyText();
+			const bool bNameFollower = !Support || Support->ShouldShowAffectedFollowerInAlert();
+			const bool bSpecificCue = !Support || Support->ShouldShowSpecificTakeoverCue();
+			const bool bAutoRequest = !Support || Support->ShouldAutoRequestTakeoverAtDisruption();
+			const bool bMarkerAtOnset = !Support || Support->ShouldSpawnRecoveryMarkerAtDisruptionOnset();
+			const FString ProfileName = Support ? Support->GetSupportProfileName() : FString(TEXT("TrainingFull"));
+			const FString Callsign = ESCROWFollowerCallsign(PilotAffectedFollowerID);
+
+			PostTasking(TEXT("TASK_C_DISRUPTION"),
+				bGenericCue ? TEXT("Review fleet state and determine whether action is required") : TEXT("Detect disruption and take over affected follower"),
+				EESCROWScenarioPhase::PhaseC_DisruptionDetection, TEXT("TakeOverAffectedFollower"), PilotAffectedFollowerID, TEXT("Valid"), OnsetEventID);
 			if (EventLog)
 			{
 				EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("DisruptionOnset"),
 					FString::Printf(TEXT("Disruption onset: F%d requires takeover."), PilotAffectedFollowerID), ActiveTasking.TaskingID, PilotAffectedFollowerID, CurrentPlanValidity,
-					FString::Printf(TEXT("{\"AffectedFollowerID\":%d,\"OnsetWorldSeconds\":%.3f}"), PilotAffectedFollowerID, PilotDisruptionOnsetWorldSeconds));
+					FString::Printf(TEXT("{\"AffectedFollowerID\":%d,\"OnsetWorldSeconds\":%.3f,\"SupportProfile\":\"%s\"}"), PilotAffectedFollowerID, PilotDisruptionOnsetWorldSeconds, *ProfileName));
 			}
-			Fleet->RequestTakeover(PilotAffectedFollowerID);
-			Fleet->PostNotification(EESCROWNotificationKind::TakeoverRequest, EESCROWMessageSeverity::Warning, PilotAffectedFollowerID,
-				FString::Printf(TEXT("TAKEOVER REQUESTED: %s"), *ESCROWFollowerCallsign(PilotAffectedFollowerID)),
-				FString::Printf(TEXT("%s has stopped and cannot continue. Take control and drive it to the recovery point."), *ESCROWFollowerCallsign(PilotAffectedFollowerID)),
-				FString::Printf(TEXT("F%d"), PilotAffectedFollowerID));
-			Fleet->AddMissionReport(FString::Printf(TEXT("RPT-0003-DISRUPTION-F%d"), PilotAffectedFollowerID), TEXT("Convoy Alert"), TEXT("ScenarioDirector"),
-				FString::Printf(TEXT("%s has reported a fault and has stopped. Take control of %s, drive it to the marked recovery point, then release control to return it to autonomy."), *ESCROWFollowerCallsign(PilotAffectedFollowerID), *ESCROWFollowerCallsign(PilotAffectedFollowerID)), true);
+
+			if (bAutoRequest)
+			{
+				Fleet->RequestTakeover(PilotAffectedFollowerID);
+			}
+
+			if (bGenericCue)
+			{
+				// ManualReduced: something is wrong somewhere; no follower, no action, no marker.
+				const FString GenericText = TEXT("Convoy status anomaly detected. Review fleet state.");
+				Fleet->PostNotification(EESCROWNotificationKind::Warning, EESCROWMessageSeverity::Warning, 0, TEXT("CONVOY STATUS ANOMALY"), GenericText, TEXT("GPS"));
+				Fleet->AddMissionReport(TEXT("RPT-0003-ANOMALY"), TEXT("Convoy Status"), TEXT("ScenarioDirector"), GenericText, false, false);
+				if (EventLog)
+				{
+					EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("GenericAnomalyCueShown"), GenericText, ActiveTasking.TaskingID, 0, CurrentPlanValidity,
+						FString::Printf(TEXT("{\"SupportProfile\":\"%s\",\"Channels\":\"Toast+Report\",\"NamesFollower\":false,\"NamesAction\":false,\"OnsetWorldSeconds\":%.3f}"), *ProfileName, PilotDisruptionOnsetWorldSeconds));
+				}
+			}
+			else if (bSpecificCue)
+			{
+				FString Title;
+				FString Body;
+				FString ReportBody;
+				if (bNameFollower && Support && Support->GetSupportProfile() == EESCROWSupportProfile::ScaffoldedHigh)
+				{
+					// Evidence-based and non-authoritative: the operator still decides and takes control.
+					const AActor* FaultFollowerActor = PilotGetFollowerActor(PilotAffectedFollowerID);
+					const double BehindM = FaultFollowerActor ? FVector::Dist2D(FaultFollowerActor->GetActorLocation(), CVLocation) / 100.0 : -1.0;
+					const FString Evidence = FString::Printf(TEXT("speed dropped to 0 m/s and holding position%s; no longer keeping up with the convoy"),
+						BehindM >= 0.0 ? *FString::Printf(TEXT(", %.0f m from the command vehicle"), BehindM) : TEXT(""));
+					Title = FString::Printf(TEXT("LIKELY AFFECTED: %s"), *Callsign);
+					Body = FString::Printf(TEXT("Likely affected asset: %s. Evidence: %s. Consider taking over %s."), *Callsign, *Evidence, *Callsign);
+					ReportBody = Body;
+				}
+				else
+				{
+					Title = FString::Printf(TEXT("TAKEOVER REQUESTED: %s"), *Callsign);
+					Body = FString::Printf(TEXT("%s has stopped and cannot continue. Take control and drive it to the recovery point."), *Callsign);
+					ReportBody = FString::Printf(TEXT("%s has reported a fault and has stopped. Take control of %s, drive it to the marked recovery point, then release control to return it to autonomy."), *Callsign, *Callsign);
+				}
+				Fleet->PostNotification(EESCROWNotificationKind::TakeoverRequest, EESCROWMessageSeverity::Warning, PilotAffectedFollowerID, Title, Body, FString::Printf(TEXT("F%d"), PilotAffectedFollowerID));
+				Fleet->AddMissionReport(FString::Printf(TEXT("RPT-0003-DISRUPTION-F%d"), PilotAffectedFollowerID), TEXT("Convoy Alert"), TEXT("ScenarioDirector"), ReportBody, true);
+				if (EventLog)
+				{
+					EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("SpecificAffectedFollowerCueShown"), Body, ActiveTasking.TaskingID, PilotAffectedFollowerID, CurrentPlanValidity,
+						FString::Printf(TEXT("{\"SupportProfile\":\"%s\",\"Channels\":\"Toast+Report\",\"NamesFollower\":true,\"AffectedFollowerID\":%d,\"AutoRequestedTakeover\":%s,\"OnsetWorldSeconds\":%.3f}"),
+							*ProfileName, PilotAffectedFollowerID, bAutoRequest ? TEXT("true") : TEXT("false"), PilotDisruptionOnsetWorldSeconds));
+				}
+			}
 
 			// Make the fault physical: hold the affected follower and mark a recovery point ahead of it.
 			PilotPriorOrderType = PilotReadConvoyIntArray(TEXT("PathModes"), PilotAffectedFollowerID, 5);
@@ -1928,15 +2022,23 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 			const AActor* FaultFollower = PilotGetFollowerActor(PilotAffectedFollowerID);
 			const FVector FaultFrom = FaultFollower ? FaultFollower->GetActorLocation() : CVLocation;
 			PilotRecoveryLocation = PilotComputeRecoveryLocation(FaultFrom);
-			PilotSpawnRecoveryPoint(PilotRecoveryLocation);
 			if (EventLog)
 			{
 				EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("FaultHoldApplied"),
 					FString::Printf(TEXT("F%d held (fault)."), PilotAffectedFollowerID), ActiveTasking.TaskingID, PilotAffectedFollowerID, CurrentPlanValidity,
 					FString::Printf(TEXT("{\"FollowerLocation\":\"%s\"}"), *FaultFrom.ToCompactString()));
-				EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("RecoveryPointSpawned"),
-					TEXT("Recovery point marked ahead of the affected follower."), ActiveTasking.TaskingID, PilotAffectedFollowerID, CurrentPlanValidity,
-					FString::Printf(TEXT("{\"X\":%.0f,\"Y\":%.0f,\"DistanceFromFollowerCm\":%.0f}"), PilotRecoveryLocation.X, PilotRecoveryLocation.Y, FVector::Dist2D(FaultFrom, PilotRecoveryLocation)));
+			}
+			if (bMarkerAtOnset)
+			{
+				PilotSpawnRecoveryMarkerLogged(EventLog, TEXT("DisruptionOnset"));
+			}
+			else if (EventLog)
+			{
+				// The location is computed now (the follower is held, so it will not move) but the marker
+				// stays hidden until the participant takes over the affected follower.
+				EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("RecoveryMarkerDeferred"),
+					TEXT("Recovery marker withheld until the participant takes over the affected follower."), ActiveTasking.TaskingID, PilotAffectedFollowerID, CurrentPlanValidity,
+					FString::Printf(TEXT("{\"SupportProfile\":\"%s\"}"), *ProfileName));
 			}
 		}
 		break;
@@ -1958,6 +2060,12 @@ void UESCROWScenarioDirectorSubsystem::PilotPhaseTick()
 						FString::Printf(TEXT("{\"TakeoverLatencySeconds\":%.3f}"), Latency));
 				}
 				AcknowledgeActiveTasking(TEXT("OperatorTakeover"));
+				if (!bPilotRecoveryMarkerSpawned)
+				{
+					// Withheld at onset (ManualReduced / ScaffoldedHigh): reveal it now that the
+					// participant has identified and taken over the affected follower.
+					PilotSpawnRecoveryMarkerLogged(EventLog, TEXT("ParticipantTakeover"));
+				}
 				SetScenarioPhase(EESCROWScenarioPhase::PhaseD_TakeoverIntervention, TEXT("TakeoverOnAffectedFollower"));
 			}
 			else if (!PilotWrongFollowersLogged.Contains(TakenOver))
@@ -2165,6 +2273,34 @@ void UESCROWScenarioDirectorSubsystem::PilotSpawnRecoveryPoint(const FVector& Lo
 	// Same tag family the GPS rally markers use, so the GPS shows it.
 	Marker->Tags.Add(FName(TEXT("ESCROW_RallyMarker_R")));
 	PilotRecoveryActor = Marker;
+}
+
+UESCROWSessionSubsystem* UESCROWScenarioDirectorSubsystem::PilotGetSession() const
+{
+	const UGameInstance* GameInstance = GetWorld() ? GetWorld()->GetGameInstance() : nullptr;
+	return GameInstance ? GameInstance->GetSubsystem<UESCROWSessionSubsystem>() : nullptr;
+}
+
+void UESCROWScenarioDirectorSubsystem::PilotSpawnRecoveryMarkerLogged(UESCROWEventLogSubsystem* EventLog, const TCHAR* Trigger)
+{
+	if (bPilotRecoveryMarkerSpawned)
+	{
+		return;
+	}
+	bPilotRecoveryMarkerSpawned = true;
+	PilotSpawnRecoveryPoint(PilotRecoveryLocation);
+	if (EventLog)
+	{
+		const UESCROWSessionSubsystem* Support = PilotGetSession();
+		const AActor* Follower = PilotGetFollowerActor(PilotAffectedFollowerID);
+		const double Since = GetWorld() ? GetWorld()->GetTimeSeconds() - PilotDisruptionOnsetWorldSeconds : 0.0;
+		EventLog->RecordScenarioEventSimple(GetCurrentPhaseName(), TEXT("RecoveryPointSpawned"),
+			TEXT("Recovery point marked ahead of the affected follower."), ActiveTasking.TaskingID, PilotAffectedFollowerID, CurrentPlanValidity,
+			FString::Printf(TEXT("{\"X\":%.0f,\"Y\":%.0f,\"DistanceFromFollowerCm\":%.0f,\"Trigger\":\"%s\",\"SpawnedAtOnset\":%s,\"SecondsSinceOnset\":%.3f,\"SupportProfile\":\"%s\"}"),
+				PilotRecoveryLocation.X, PilotRecoveryLocation.Y, Follower ? FVector::Dist2D(Follower->GetActorLocation(), PilotRecoveryLocation) : -1.0,
+				Trigger, FCString::Stricmp(Trigger, TEXT("DisruptionOnset")) == 0 ? TEXT("true") : TEXT("false"), Since,
+				Support ? *Support->GetSupportProfileName() : TEXT("TrainingFull")));
+	}
 }
 
 void UESCROWScenarioDirectorSubsystem::PilotClearRecoveryPoint()

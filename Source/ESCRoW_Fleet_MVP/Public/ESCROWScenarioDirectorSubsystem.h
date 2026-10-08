@@ -377,6 +377,10 @@ private:
 	FVector PilotComputeRecoveryLocation(const FVector& From) const;
 	void PilotSpawnRecoveryPoint(const FVector& Location);
 	void PilotClearRecoveryPoint();
+	// Spawns the recovery marker once and logs when/why (Trigger: "DisruptionOnset" or "ParticipantTakeover").
+	void PilotSpawnRecoveryMarkerLogged(class UESCROWEventLogSubsystem* EventLog, const TCHAR* Trigger);
+	class UESCROWSessionSubsystem* PilotGetSession() const;
+	bool bPilotRecoveryMarkerSpawned = false;
 	void PilotReassertFault(UESCROWFleetSubsystem* Fleet, UWorld* World);
 	void PilotTickFault(UESCROWFleetSubsystem* Fleet, class UESCROWEventLogSubsystem* EventLog, UWorld* World);
 

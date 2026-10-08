@@ -69,6 +69,11 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
 	EESCROWVehicleControlRole VehicleControlRole = EESCROWVehicleControlRole::Driving;
 
+	// Support profile (see EESCROWSupportProfile). Authoritative for the run once the
+	// ScenarioDirector has normalized the RunConfig. Default keeps the original guided behavior.
+	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
+	EESCROWSupportProfile SupportProfile = EESCROWSupportProfile::TrainingFull;
+
 	UPROPERTY(BlueprintReadOnly, Category = "ESCRoW|Session")
 	FString StartTimestampLocal;
 
@@ -176,6 +181,43 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "ESCRoW|Session")
 	FString GetDisplayModeName() const;
+
+	// Support profile. Index order matches EESCROWSupportProfile (0 TrainingFull, 1 ManualReduced,
+	// 2 ScaffoldedHigh, 3 NoisyFragmented); index is clamped.
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|SupportProfile")
+	void SetSupportProfile(EESCROWSupportProfile NewSupportProfile);
+
+	UFUNCTION(BlueprintCallable, Category = "ESCRoW|SupportProfile")
+	void SetSupportProfileByIndex(int32 Index);
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
+	EESCROWSupportProfile GetSupportProfile() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
+	FString GetSupportProfileName() const;
+
+	// Parses "TrainingFull" / "ManualReduced" / ... (case-insensitive). Bad text -> bValid=false.
+	static EESCROWSupportProfile ParseSupportProfile(const FString& Text, bool& bValid);
+
+	// Support-parameter queries: Director / widgets ask these instead of hardcoding per-profile behavior.
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
+	bool ShouldShowSpecificTakeoverCue() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
+	bool ShouldShowAffectedFollowerInAlert() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
+	bool ShouldAutoRequestTakeoverAtDisruption() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
+	bool ShouldSpawnRecoveryMarkerAtDisruptionOnset() const;
+
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
+	bool ShouldUseGenericAnomalyText() const;
+
+	// Plumbing only for now (Rally C plan repair is not gated by it yet).
+	UFUNCTION(BlueprintPure, Category = "ESCRoW|SupportProfile")
+	bool ShouldShowSpecificValidationReasons() const;
 
 	UFUNCTION(BlueprintCallable, Category = "ESCRoW|Session")
 	void SetVehicleControlRole(EESCROWVehicleControlRole NewVehicleControlRole);

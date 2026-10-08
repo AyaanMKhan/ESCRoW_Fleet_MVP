@@ -24,6 +24,20 @@ enum class EESCROWComplexityCondition : uint8
 	HighComplexity
 };
 
+// Support profile: how much cueing / integration support the participant gets.
+// TrainingFull keeps the original guided behavior (not for primary analysis).
+// ManualReduced is the fair manual baseline (generic anomaly cue only).
+// ScaffoldedHigh adds evidence-based affected-asset cueing; participant still acts.
+// NoisyFragmented is reserved; it currently behaves as ManualReduced.
+UENUM(BlueprintType)
+enum class EESCROWSupportProfile : uint8
+{
+	TrainingFull,
+	ManualReduced,
+	ScaffoldedHigh,
+	NoisyFragmented
+};
+
 // RA36A-1: experimental display-locus factor. Metadata-only for this pass; does
 // not yet change any runtime HUD/console behavior. HUDPrimary is the default,
 // matching current build behavior.
@@ -726,6 +740,11 @@ struct FESCROWRunConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
 	FString SupportMode;
+
+	// One of TrainingFull / ManualReduced / ScaffoldedHigh / NoisyFragmented. Empty = use the
+	// session's profile (default TrainingFull). Normalized by the ScenarioDirector at run start.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
+	FString SupportProfile;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ESCRoW|RunConfig")
 	FString DisplayMode;
