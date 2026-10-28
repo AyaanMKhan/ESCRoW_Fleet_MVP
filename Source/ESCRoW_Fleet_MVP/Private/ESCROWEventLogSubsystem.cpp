@@ -9,7 +9,7 @@
 #include "GameFramework/Pawn.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "HAL/PlatformFilemanager.h"
+#include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "TimerManager.h"
 #include "EngineUtils.h"

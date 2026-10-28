@@ -3209,12 +3209,23 @@ void UESCROWScenarioDirectorSubsystem::PilotPostPlanRepair(UESCROWFleetSubsystem
 		if (PilotSlotBlocked[i])
 		{
 			++BlockedSeen;
-			PilotSpawnPlanMarker(PilotSlotLocations[i], FString::Printf(TEXT("P%d %s\nBLOCKED"), i + 1, *Name), FColor(235, 45, 45), true,
+			PilotSpawnPlanMarker(PilotSlotLocations[i], FString::Printf(TEXT("%s\nBLOCKED"), *Name), FColor(235, 45, 45), true,
 				FName(*FString::Printf(TEXT("ESCROW_RallyMarker_X%d"), BlockedSeen)), LabelYaw);
 		}
 		else
 		{
-			PilotSpawnPlanMarker(PilotSlotLocations[i], FString::Printf(TEXT("P%d %s"), i + 1, *Name), FColor(90, 225, 100), false, NAME_None, LabelYaw);
+			// The Rally B FORM markers are cleared by now, so their GPS widgets (labelled by follower, in
+			// PilotFormFollowers order) are reused to show the open planned positions of follower i + 1.
+			int32 FormIndex = i;
+			for (int32 s = 0; s < PilotSlotCount; ++s)
+			{
+				if (PilotFormFollowers[s] == i + 1)
+				{
+					FormIndex = s;
+				}
+			}
+			PilotSpawnPlanMarker(PilotSlotLocations[i], FString::Printf(TEXT("PLAN %s"), *Name), FColor(90, 225, 100), false,
+				FName(*FString::Printf(TEXT("%s%d"), *FormationTagPrefix.ToString(), FormIndex + 1)), LabelYaw);
 		}
 	}
 	for (int32 k = 0; k < PilotAltCount; ++k)
@@ -3240,7 +3251,7 @@ void UESCROWScenarioDirectorSubsystem::PilotPostPlanRepair(UESCROWFleetSubsystem
 	Fleet->PostNotification(EESCROWNotificationKind::Warning, EESCROWMessageSeverity::Warning, BlockedFollowers[0], TEXT("RALLY C PLAN BLOCKED"),
 		FString::Printf(TEXT("The planned positions for %s are blocked. Reassign them to the ALT positions, then confirm the Validate Plan report."), *BlockedNames), TEXT("REPORTS"));
 	Fleet->AddMissionReport(TEXT("RPT-0004-PLAN-REPAIR"), TEXT("Rally C Plan Repair"), TEXT("ScenarioDirector"),
-		FString::Printf(TEXT("The convoy has reached Rally C. The plan was for %s to take positions P1, P2, P3 and P4 in a line. Positions P2 and P3 are blocked (red), so %s cannot use them.\n\nAssign %s a new position each: use the two cyan ALT positions beyond Rally C. On the GPS page, select the follower, place a waypoint on its ALT position and confirm it.\n\nWhen both are reassigned, confirm the Validate Plan report."),
+		FString::Printf(TEXT("The convoy has reached Rally C. The plan was for %s to take planned positions in a line across the road (green pads, also shown on the GPS). The positions for %s are blocked (red), so they cannot use them.\n\nAssign %s a new position each: use the two cyan ALT positions beyond Rally C. On the GPS page, select the follower, place a waypoint on its ALT position and confirm it.\n\nWhen both are reassigned, confirm the Validate Plan report."),
 			*FString::Printf(TEXT("%s, %s, %s and %s"), *ESCROWFollowerCallsign(1), *ESCROWFollowerCallsign(2), *ESCROWFollowerCallsign(3), *ESCROWFollowerCallsign(4)), *BlockedNames, *BlockedNames), false, true);
 	PilotPostValidateReport(Fleet, false);
 }

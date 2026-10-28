@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__unreal-mcp__list_toolsets",
+      "mcp__unreal-mcp__describe_toolset",
+      "mcp__unreal-mcp__call_tool"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "unreal-mcp"
+  ]
+}
