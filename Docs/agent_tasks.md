@@ -16,7 +16,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **BP** = Blueprint · *
 - **Files:** none (docs only).
 - **Done when:** the baseline table is filled in for today's build. (Last known values from 2026-10-09: F3 = 129 stuck, F4 = 94 stuck.)
 
-### [ ] AT-02: Send autonomy events to the structured log (BP)
+### [~] AT-02: Send autonomy events to the structured log (BP)
 - In `BP_ESCROW_FollowerVehicle`, add a function `Escrow_LogAutonomyEvent(EventType, Detail)` that calls the existing EventLog Blueprint library (the same one `EventHit` uses for collisions).
 - Call it next to each existing `PrintString`:
   - in `Escrow_OwnDriveTick`: `ReverseStart` and `ReverseEnd`;
@@ -24,6 +24,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **BP** = Blueprint · *
   - in `Escrow_ApplyProximityGovernor`: `GovernorBlocked`.
 - Payload: FollowerID, location, forward speed, `SelCost`, `SelDist`.
 - **Done when:** test **T-02** passes and the events appear in `scenario_events.jsonl`.
+- **Status (2026-11-01):** implemented, compiled, saved; awaiting T-02 run. Rows use `EventType` = `AutonomyReverseStart` / `AutonomyReverseEnd` / `AutonomyStuckRecovery` / `AutonomyGovernorBlocked`, `AffectedFollowerID` = follower, `PayloadJSON` = `{FollowerID, LocX, LocY, LocZ, ForwardSpeedCms, SelCost, SelDist, Detail}`. Only written while a run is active.
 
 ### [ ] AT-03: Log NavPlan failures (BP)
 - In `Escrow_NavPlan`, when the path comes back empty (the branch that falls back to `[Final]`), log `NavPlanFailed` with the start and goal positions.

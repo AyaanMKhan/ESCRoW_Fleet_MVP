@@ -31,7 +31,7 @@ Fill in a row after each pass. The 2026-10-09 row comes from `ESCRoW_Fleet_MVP-b
 | ID | Name | Covers | Steps | Pass criteria |
 |---|---|---|---|---|
 | **T-01** | Full pilot regression | all | Standard route end to end | Mission completes; both faults trigger and resolve; stuck counts ≤ the previous row; no follower left behind more than 35 m when not faulted |
-| **T-02** | Autonomy events logged | AT-02 | Run T-01, then open `scenario_events.jsonl` | Every `REVERSE START` / `STUCK RECOVERY` / `GOV BLOCKED` line in the output log has a matching structured event with FollowerID and location |
+| **T-02** | Autonomy events logged | AT-02 | Run T-01, then open `scenario_events.jsonl` | Every `REVERSE START` / `REVERSE END` / `STUCK RECOVERY` / `GOV BLOCKED` output-log line has a matching `AutonomyReverseStart` / `AutonomyReverseEnd` / `AutonomyStuckRecovery` / `AutonomyGovernorBlocked` row (same count per follower). Check: `grep -c '"EventType":"AutonomyStuckRecovery"' scenario_events.jsonl` |
 | **T-03** | Nav self-check | AT-04 | Start the mission and wait 15 s | `NavDiagnostics` reports that every follower can path to the command vehicle; no Recast agent warning |
 | **T-04** | Stuck escalation | AT-10 | Park the command vehicle so a follower's target is behind a wall or rock cluster; wait 60 s | Escalation goes reverse → offset replan → flip → `AutonomyEscalated`. No more than 3 consecutive `StuckRecovery` events without escalating. The follower ends Degraded/Hold, not looping |
 | **T-05** | Gap keeping | AT-11, AT-12 | Straight road at a steady 40 km/h for 60 s, then a hard brake | Follower gaps stay within 6–35 m while steady; no F↔F collisions on the hard brake |
