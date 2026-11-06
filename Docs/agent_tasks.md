@@ -83,6 +83,13 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **BP** = Blueprint · *
 - **Done when:** scenario 1 shows no circling, and **T-01** does not get worse.
 - **Status (2026-11-06):** implemented, compiled, saved. Scenario 1 passes (largest steering 22 degrees, stops 18 m behind HAWK). Desert baseline passes (no reverses, no stuck events). **T-01** on the flat pilot still to run.
 
+### [ ] AT-16: Followers hit rocks they should avoid (C++, approved)
+- **Measured:** desert rocks are about 1 m wide and 30-100 cm tall. The avoidance sweep's lower edge is about 40 cm above the vehicle origin, and rock tops can read as ground, so low rocks can pass unseen. A trace test of this was not completed.
+- **Test:** **Harness scenario 3** sends WOLF, LYNX and BEAR through the rock field near `10500, -12000`. Baseline on `a63f1ca`: 7 rock hits, 12 stuck events, 2 escalations.
+- **Tried, not committed:** a wheel-height low sweep that treats instanced foliage as obstacles, limited to 7-15 m, with the main sweep unchanged. Stuck events fell to 6 and escalations to 1, but rock hits only fell to 6, and LYNX left the route and ended 42 m past its target, still driving, with the target over 100 degrees behind it.
+- **Next:** find out why LYNX cannot turn back toward a target behind it (`DIAG` shows the cost choosing straight ahead), and add a rule that stops a follower moving away from its target. Limiting the sweep range and restoring the main sweep did not change that path, so the cause is probably not the sweep range.
+- **Done when:** scenario 3 rock hits drop clearly below baseline with no follower leaving the route, and scenarios 0 and 1 stay clean.
+
 ---
 
 ## Phase 2: Explicit state and the StateTree
