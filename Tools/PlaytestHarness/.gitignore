@@ -1,0 +1,6 @@
+mcp_session.txt
+last_run.log
+diag.json
+editor.lock/
+__pycache__/
+*.log

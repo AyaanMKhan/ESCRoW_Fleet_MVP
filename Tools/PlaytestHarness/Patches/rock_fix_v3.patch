@@ -1,0 +1,71 @@
+diff --git a/Source/ESCRoW_Fleet_MVP/Private/ESCROWAvoidanceLibrary.cpp b/Source/ESCRoW_Fleet_MVP/Private/ESCROWAvoidanceLibrary.cpp
+index 57d9037..2f4e97b 100644
+--- a/Source/ESCRoW_Fleet_MVP/Private/ESCROWAvoidanceLibrary.cpp
++++ b/Source/ESCRoW_Fleet_MVP/Private/ESCROWAvoidanceLibrary.cpp
+@@ -3,6 +3,7 @@
+ #include "ESCROWAvoidanceLibrary.h"
+ #include "Engine/World.h"
+ #include "Engine/EngineTypes.h"
++#include "Components/InstancedStaticMeshComponent.h"
+ #include "GameFramework/Actor.h"
+ #include "GameFramework/Pawn.h"
+ #include "CollisionQueryParams.h"
+@@ -14,6 +15,15 @@ namespace
+ 	constexpr float SweepRadius = 220.0f;
+ 	constexpr float SweepHeight = 260.0f;
+ 	constexpr float BlockedCost = 1000000.0f;
++	// Wheel-height sweep: the main sphere's bottom sits 40 cm above the actor origin, so low rocks pass under it.
++	constexpr float LowSweepRadius = 110.0f;
++	constexpr float LowSweepHeight = 140.0f;
++
++	// Foliage rocks are instanced meshes. Their tops face upward but they are never drivable ground.
++	bool IsInstancedObstacle(const FHitResult& Hit)
++	{
++		return Cast<UInstancedStaticMeshComponent>(Hit.GetComponent()) != nullptr;
++	}
+ }
+ 
+ void UESCROWAvoidanceLibrary::ComputeAvoidanceHeading(UObject* WorldContextObject, AActor* Vehicle, FVector PursuitTarget, float ForwardSpeed, float PrevSelSign,
+@@ -52,6 +62,13 @@ void UESCROWAvoidanceLibrary::ComputeAvoidanceHeading(UObject* WorldContextObjec
+ 	const FCollisionShape Sphere = FCollisionShape::MakeSphere(SweepRadius);
+ 	const FVector Start = Loc + FVector(0.0f, 0.0f, SweepHeight);
+ 
++	FCollisionQueryParams LowParams(SCENE_QUERY_STAT(ESCROWAvoidanceLowSweep), false, Vehicle);
++	const FCollisionShape LowSphere = FCollisionShape::MakeSphere(LowSweepRadius);
++	const FVector LowStart = Loc + Vehicle->GetActorUpVector() * LowSweepHeight;
++	const FQuat VehicleQuat = Vehicle->GetActorQuat();
++	// Only rocks close enough to steer around count: at full range a scattered field reads as a solid wall.
++	const float LowRange = FMath::Clamp(700.0f + Speed, 700.0f, 1500.0f);
++
+ 	for (int32 i = 0; i < NumRays; ++i)
+ 	{
+ 		const float A = -FanHalfAngleDeg + static_cast<float>(i) * FanStepDeg;
+@@ -83,6 +100,28 @@ void UESCROWAvoidanceLibrary::ComputeAvoidanceHeading(UObject* WorldContextObjec
+ 			D = HitDist;
+ 			break;
+ 		}
++		// Low pass, tilted with the vehicle so it follows the slope. Terrain is ignored once found, so
++		// rolling ground cannot block the ray; a rock the sphere already overlaps is left to stuck recovery.
++		const FVector LowDir = VehicleQuat.RotateVector(FVector(FMath::Cos(FMath::DegreesToRadians(A)), FMath::Sin(FMath::DegreesToRadians(A)), 0.0f));
++		for (int32 Step = 0; Step < 3; ++Step)
++		{
++			FHitResult Hit;
++			if (!World->SweepSingleByChannel(Hit, LowStart, LowStart + LowDir * LowRange, FQuat::Identity, ECC_Visibility, LowSphere, LowParams))
++			{
++				break;
++			}
++			const bool bGroundLike = Hit.ImpactNormal.Z > 0.65f && !Cast<APawn>(Hit.GetActor()) && !IsInstancedObstacle(Hit);
++			if (bGroundLike)
++			{
++				LowParams.AddIgnoredActor(Hit.GetActor());
++				continue;
++			}
++			if (!Hit.bStartPenetrating)
++			{
++				D = FMath::Min(D, Hit.Distance);
++			}
++			break;
++		}
+ 		Dist[i] = FMath::Min(D, DCap);
+ 	}
+ 
