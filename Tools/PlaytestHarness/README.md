@@ -38,6 +38,8 @@ The arguments are the map, a time limit in seconds, and the scenario:
 
 ## Known limits
 
+- Results depend on frame rate. `runtest.py` turns off Unreal's background CPU throttling, which resets on every editor restart. Never compare a throttled run with an unthrottled one.
+- Rock runs vary a lot, so compare at least 3 runs per build.
 - Scenarios use desert map coordinates, so they don't work on the flat pilot map yet.
 - One play session at a time. Don't run two jobs in parallel.
 - Teleporting a vehicle into rocks launches it. Place vehicles clear of rocks and pin them at zero velocity.

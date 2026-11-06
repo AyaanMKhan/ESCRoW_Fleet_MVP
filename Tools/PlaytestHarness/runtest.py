@@ -8,6 +8,8 @@ A='EditorToolset.EditorAppToolset'; O='editor_toolset.toolsets.object.ObjectTool
 LOG=os.path.expanduser('~/Library/Logs/Unreal Engine/ESCRoW_Fleet_MVPEditor/ESCRoW_Fleet_MVP.log')
 MAP=sys.argv[1]; LIMIT=float(sys.argv[2]); SCEN=int(sys.argv[3]) if len(sys.argv)>3 else 0
 cdo={'refPath':'/Game/ESCROW/Blueprints/Core/BP_ESCROW_GameMode.Default__BP_ESCROW_GameMode_C'}
+perf={'refPath':'/Script/UnrealEd.Default__EditorPerformanceSettings'}
+print('no background throttle',call(O,'set_properties',{'instance':perf,'values':json.dumps({'bThrottleCPUWhenNotForeground':False})})[:60])
 print('switch on',call(O,'set_properties',{'instance':cdo,'values':json.dumps({'bRunTestHarness':True})})[:200])
 hc={'refPath':'/Game/ESCROW/Blueprints/Test/BP_ESCROW_TestHarness.Default__BP_ESCROW_TestHarness_C'}
 print('scen',call(O,'set_properties',{'instance':hc,'values':json.dumps({'ScenarioId':SCEN})})[:100])

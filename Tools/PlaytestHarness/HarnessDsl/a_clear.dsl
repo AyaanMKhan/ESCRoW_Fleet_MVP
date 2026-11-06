@@ -5,5 +5,6 @@
   (Variables|Default|SetRecoveryGoalUntil 0.0)
   (if (Variables|Default|GetAutonomyDegraded)
     (Variables|Default|SetAutonomyDegraded false)
+    (ESCRoW|Fleet|SetRequiresTakeover :self (ESCRoW|Subsystems|GetESCROWFleetSubsystem) :FollowerID (Variables|Default|GetFollowerID) :bRequiresTakeover false)
     (ESCRoW|Fleet|SetFollowerObjective :self (ESCRoW|Subsystems|GetESCROWFleetSubsystem) :FollowerID (Variables|Default|GetFollowerID) :ObjectiveText (Variables|Default|GetRecoverySavedObjective))
     (CallFunction|EscrowLogAutonomyEvent :EventType "EscalationCleared" :Detail "Operator took control")))
