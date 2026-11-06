@@ -42,15 +42,17 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **BP** = Blueprint · *
 
 ## Phase 1: Fix current failures
 
-### [ ] AT-10: Escalating stuck recovery (BP)
+### [~] AT-10: Escalating stuck recovery (BP)
 - Add `StuckAttempts` (int) and `LastStuckTime` (float) variables.
 - Change `Escrow_StuckWatch` so each failure escalates:
-  1. 1st stuck → reverse (current behavior).
-  2. 2nd within 15 s → `Escrow_NavPlan` to a goal offset ±6 m sideways (the side picked by `LastSelSign`).
-  3. 3rd → flip `LastSelSign` and replan again.
-  4. 4th → set `bAutonomyDegraded = true`, hold the vehicle, and log `AutonomyEscalated`. The fleet status shows "Requesting assistance".
+  1. 1st stuck → reverse straight, then aim at a point 6 m to the side, away from the last rock hit (or by `LastSelSign` if there was no recent hit).
+  2. 2nd within 20 s → reverse with the wheels turned to swing the nose to that side, then aim at the same kind of point.
+  3. 3rd → flip the side and repeat.
+  4. 4th → set `bAutonomyDegraded = true`, hold the vehicle, and log `AutonomyEscalated`. The objective shows "Requesting assistance", `RequestTakeover` sets the takeover flag, and `PostNotification` raises the "NEEDS ASSISTANCE" alert.
 - Reset `StuckAttempts` after the vehicle moves 15 m.
+- Taking over the follower clears the held state and attempt count.
 - **Done when:** **T-04** passes (no more than 3 consecutive recoveries without escalating) and **T-01** stuck counts drop well below the baseline.
+- **Status (2026-11-06):** implemented, compiled, saved. In play, escalation fired on a wedged LYNX, and a forced escalation posts the alert (`AlertPosted`). The recovery reverse and side goal are still unconfirmed on a follower that can get free. New `Escrow_EscalateStuck`, `Escrow_EscalateToOperator`, `Escrow_ApplyRecoverySteer`, `Escrow_ClearStuckRecovery` and `Escrow_RecoveryGoalActive`. `EventHit` stores `LastHitLoc` and `LastHitTime` for non-vehicle hits. Rows use `EventType` = `AutonomyRecoveryAttempt` / `AutonomyEscalated` / `AutonomyEscalationCleared`. The 15 s window from the original task became 20 s because recoveries in the 2026-11-06 run were up to 12.5 s apart. `EventUnpossessed` also fires when the AI hands over, so `Escrow_ClearStuckRecovery` runs at takeover start and must not change the autonomy mode. More AND/OR inputs that `read_graph_dsl` doesn't show were added in `Escrow_OwnDriveTick` and `Escrow_ReleaseAIHandbrake`.
 
 ### [ ] AT-11: Restore gap keeping in own-drive (BP)
 - In `Escrow_ReleaseAIHandbrake`, stop forcing `GovAllowedSpeed = 100000` when `bOwnDriveActive`. Instead, compute the allowed speed against the **assigned leader only** (`FollowTargetActor`).
@@ -74,6 +76,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **BP** = Blueprint · *
 - The 18 m hold and 20 m release values are starting points; tune them in play. **D** (following the leader's track) stays in AT-31.
 - **Done when:** assigning the full chain to a parked fleet gives no reverse events and no wide loops; all four followers start in order when the command vehicle drives off; and **T-05** and **T-01** do not get worse.
 - **Status (2026-11-06):** implemented, compiled, saved. Play test on the desert map: parked followers no longer reverse on assignment and the gap looks right. T-05 and T-01 still to run. New `Escrow_UpdateFollowGapHold` and `Escrow_EndFollowGapHold`, with `bFollowGapHold`, `bFollowGapWaiting`, `bFollowHasLeader` and `FollowGapSavedObjective`. Rows use `EventType` = `AutonomyFollowHoldStart` / `AutonomyFollowHoldEnd`. The "target behind" reverse now applies only when `bFollowHasLeader` is false, so waypoint reversing is unchanged. Two ANDs in `Escrow_OwnDriveTick` now have a third input that `read_graph_dsl` doesn't show, so don't rewrite that graph from its DSL.
+
+### [~] AT-15: Stop followers driving to the edge of the nav mesh (BP)
+- **Problem:** when the target is off the nav mesh, `FindPathToLocationSynchronously` returns a partial path ending at the mesh edge. `Escrow_NavPlan` only fell back to the target when the path was empty, so the follower steered at that edge point and could circle it forever while its real target was metres away. Reproduced with **Harness scenario 1** (WOLF at about 8 m from its target steered at a point frozen at `6700, -11100`).
+- **Fix:** if the path is partial, or its last point is more than 3 m from the target, `Escrow_NavPlan` replaces it with the target itself and the avoidance fan does the steering.
+- **Done when:** scenario 1 shows no circling, and **T-01** does not get worse.
+- **Status (2026-11-06):** implemented, compiled, saved. Scenario 1 passes (largest steering 22 degrees, stops 18 m behind HAWK). Desert baseline passes (no reverses, no stuck events). **T-01** on the flat pilot still to run.
 
 ---
 
@@ -137,5 +145,6 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **BP** = Blueprint · *
 
 - [ ] **AT-40:** Port the per-tick driver to a C++ `UESCROWFollowerDriveComponent`.
 - [ ] **AT-41:** Build an automated obstacle-course map plus automation tests (**T-10**).
+  - **Started 2026-11-06:** `/Game/ESCROW/Blueprints/Test/BP_ESCROW_TestHarness` runs without the menu or player input. Set `bRunTestHarness` on the `BP_ESCROW_GameMode` class defaults for the session only, and never save it as true. `ScenarioId` 0 assigns the follow chain and drives the desert route, 1 recreates the WOLF circling position, and 2 forces a LYNX escalation. It sets `bDriveDiagLog` on the followers, which writes `DIAG` lines to the output log.
 - [ ] **AT-42:** Per-tick input recording for deterministic replay.
 - [ ] **AT-43:** A read-only state feed for the later AI-support condition.
