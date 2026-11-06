@@ -65,6 +65,16 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **BP** = Blueprint · *
 - After `EventUnpossessed` → `Escrow_RestoreAfterTakeover`, force an immediate `Escrow_NavPlan` and set `StuckAttempts = 0`, so the follower doesn't resume with an old path.
 - **Done when:** **T-06** passes (the follower rejoins within 30 s after release with no reverse loop).
 
+### [~] AT-14: Stop parked followers reversing to reach the trail point (BP)
+- **Problem:** a follower's target is a point about 16 m directly behind its leader. A follower parked closer than that has its target behind it, so assigning a follow target starts a reverse (logged as "Blocked or stalled; reversing to clear") and can start a wide full-lock loop.
+- **A: Close-range hold.** While the leader is stopped and the gap to it is under about 18 m, the follower stays parked. It starts when the leader moves away or the gap opens. Use a separate, larger start threshold so it doesn't jitter between hold and drive.
+- **C: Reverse only when blocked.** A target behind the vehicle must not start a reverse. Reverse stays for real obstacles and stalls (see AT-10).
+- A gap under the 6 m minimum from **T-05** also holds instead of reversing.
+- If the follower is ahead of its leader and within 30 m, it stays parked until the leader passes and shows "Waiting for leader". Beyond 30 m it drives normally, so a far-off follower can't deadlock the Rally A gather.
+- The 18 m hold and 20 m release values are starting points; tune them in play. **D** (following the leader's track) stays in AT-31.
+- **Done when:** assigning the full chain to a parked fleet gives no reverse events and no wide loops; all four followers start in order when the command vehicle drives off; and **T-05** and **T-01** do not get worse.
+- **Status (2026-11-06):** implemented, compiled, saved. Play test on the desert map: parked followers no longer reverse on assignment and the gap looks right. T-05 and T-01 still to run. New `Escrow_UpdateFollowGapHold` and `Escrow_EndFollowGapHold`, with `bFollowGapHold`, `bFollowGapWaiting`, `bFollowHasLeader` and `FollowGapSavedObjective`. Rows use `EventType` = `AutonomyFollowHoldStart` / `AutonomyFollowHoldEnd`. The "target behind" reverse now applies only when `bFollowHasLeader` is false, so waypoint reversing is unchanged. Two ANDs in `Escrow_OwnDriveTick` now have a third input that `read_graph_dsl` doesn't show, so don't rewrite that graph from its DSL.
+
 ---
 
 ## Phase 2: Explicit state and the StateTree
