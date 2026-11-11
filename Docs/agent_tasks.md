@@ -10,11 +10,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done · **BP** = Blueprint · *
 
 ## Phase 0: Baseline and observability (start here)
 
-### [ ] AT-01: Record the baseline run
+### [x] AT-01: Record the baseline run
 - Run the flat pilot mission (Driver + Takeover, low complexity) using test **T-01**.
 - Save the counts of `STUCK RECOVERY`, `REVERSE START` and `GOV BLOCKED` per follower into the Test Plan's baseline table.
 - **Files:** none (docs only).
 - **Done when:** the baseline table is filled in for today's build. (Last known values from 2026-10-09: F3 = 129 stuck, F4 = 94 stuck.)
+- **Status (2026-11-11):** done with 3 automated runs of **Harness scenario 5** (the full flat-pilot mission). There was 1 stuck recovery across all 3 runs (F2, run 1), 0 escalations, and every run completed A-F. The automated runs are T-01 runs for AT-10, AT-14 and AT-15, but the 15 m attempt reset (AT-10) and the "no follower left behind" check were not measured.
 
 ### [~] AT-02: Send autonomy events to the structured log (BP)
 - In `BP_ESCROW_FollowerVehicle`, add a function `Escrow_LogAutonomyEvent(EventType, Detail)` that calls the existing EventLog Blueprint library (the same one `EventHit` uses for collisions).

@@ -16,7 +16,9 @@ Fill in a row after each pass. The 2026-10-09 row comes from `ESCRoW_Fleet_MVP-b
 | Date / build | Task | F1 stuck | F2 stuck | F3 stuck | F4 stuck | Reverses (total) | Gov blocked | Collisions F↔F | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | 2026-10-09 | (pre-roadmap) | 1 | 1 | 129 | 94 | 10 | 0 | ? | F3 looped for about 5 min |
-| | AT-01 | | | | | | | | |
+| 2026-11-11 (46bd70e + harness scenario 5) | AT-01 | 0 / 0 / 0 | 1 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 1 / 0 / 0 | 0 / 0 / 0 | 2 / 2 / 3 | 3 automated runs (harness scenario 5, unthrottled, flat pilot). All completed A-F in 614-642 s; formation held, both faults taken over and released, 0 escalations. The harness command vehicle also hit followers 2 / 1 / 1 times. Not measured: the 35 m left-behind criterion |
+
+Automated T-01 runs use harness scenario 5 (see `Tools/PlaytestHarness/README.md`). The harness differs from a manual run in three ways: the command vehicle follows a nav-mesh path at up to 15 m/s with no follower avoidance, there is no 10 s idle at Rally A, and fault takeovers send a waypoint order instead of driving the follower. Compare automated rows only with other automated rows. Cells with three values are runs 1 / 2 / 3.
 
 ## Standard route (used by T-01, T-05, T-06)
 
