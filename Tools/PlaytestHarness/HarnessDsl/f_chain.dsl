@@ -1,0 +1,6 @@
+(fn Escrow_HarnessChain ()
+  (bind _m (Variables|Default|GetConvoyMgr))
+  (Class|BPESCROWConvoyTelemetryManager|EscrowApplyNavOrder :self _m :FollowerID 1 :OrderType 1 :TargetVehicleID 0 :TargetLocation "0, 0, 0" :BreadcrumbIndex 0 :Reason "TestHarness")
+  (Class|BPESCROWConvoyTelemetryManager|EscrowApplyNavOrder :self _m :FollowerID 2 :OrderType 1 :TargetVehicleID 1 :TargetLocation "0, 0, 0" :BreadcrumbIndex 0 :Reason "TestHarness")
+  (Class|BPESCROWConvoyTelemetryManager|EscrowApplyNavOrder :self _m :FollowerID 3 :OrderType 1 :TargetVehicleID 2 :TargetLocation "0, 0, 0" :BreadcrumbIndex 0 :Reason "TestHarness")
+  (Class|BPESCROWConvoyTelemetryManager|EscrowApplyNavOrder :self _m :FollowerID 4 :OrderType 1 :TargetVehicleID 3 :TargetLocation "0, 0, 0" :BreadcrumbIndex 0 :Reason "TestHarness"))

@@ -1,0 +1,6 @@
+(fn Escrow_HarnessGatherCount ()
+  (Variables|Default|SetGatherCount 0)
+  (for _f (Actor|GetAllActorsOfClass "/Game/ESCROW/Blueprints/Followers/BP_ESCROW_FollowerVehicle.BP_ESCROW_FollowerVehicle_C")
+    (bind _l (Transformation|GetActorLocation _f))
+    (if (and (> (.y _l) 35000.0) (and (< (.y _l) 53500.0) (and (> (.x _l) -9000.0) (< (.x _l) 10300.0))))
+      (Variables|Default|SetGatherCount (+ (Variables|Default|GetGatherCount) 1)))))

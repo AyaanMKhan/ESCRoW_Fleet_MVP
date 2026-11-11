@@ -41,4 +41,6 @@
   (if (== _scen 3)
     (CallFunction|EscrowHarnessScenarioRock))
   (if (== _scen 4)
-    (CallFunction|EscrowHarnessScenarioRecovery)))
+    (CallFunction|EscrowHarnessScenarioRecovery))
+  (if (== _scen 5)
+    (CallFunction|EscrowHarnessScenarioFlat)))
